@@ -69,19 +69,29 @@ async function lookupStop(pro) {
   const auth = await getToken();
   if (auth.error) return { error:'auth_failed', message:auth.error, tried:auth.tried, reasons:auth.reasons, source:'nuvizz_live' };
 
+  // Try Bearer token first, then try token as authToken header, then query param
   const url = `${auth.base}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
   console.log(`[LOOKUP] ${url}`);
-  const res = await rq(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
-  console.log(`[LOOKUP] ${res.status} ${res.body.slice(0,500)}`);
+
+  // Attempt 1: Bearer token (standard)
+  let res = await rq(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
+  console.log(`[LOOKUP-Bearer] ${res.status} ${res.body.slice(0,300)}`);
+
+  // Attempt 2: If Bearer fails, try authToken header
+  if (res.status === 401 || res.status === 403) {
+    res = await rq(url, { headers: { 'authToken': auth.token } });
+    console.log(`[LOOKUP-authToken] ${res.status} ${res.body.slice(0,300)}`);
+  }
+
+  // Attempt 3: If still failing, try token as query param
+  if (res.status === 401 || res.status === 403) {
+    const urlQ = `${url}?authToken=${encodeURIComponent(auth.token)}`;
+    res = await rq(urlQ);
+    console.log(`[LOOKUP-query] ${res.status} ${res.body.slice(0,300)}`);
+  }
 
   if (res.status === 404 || res.status === 409) return { error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, apiUrl:url, detail:res.body.slice(0,300), source:'nuvizz_live' };
-  if (res.status === 401) {
-    cachedToken=''; tokenExpiry=0; workingBase='';
-    const a2 = await getToken(); if (a2.error) return { error:'auth_retry_failed', message:a2.error, source:'nuvizz_live' };
-    const r2 = await rq(`${a2.base}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`, { headers:{'Authorization':`Bearer ${a2.token}`} });
-    if (r2.status !== 200) return { error:'retry_failed', httpStatus:r2.status, detail:r2.body.slice(0,300), source:'nuvizz_live' };
-    return parse(JSON.parse(r2.body), pro);
-  }
+  if (res.status === 401 || res.status === 403) return { error:'lookup_auth_failed', pro, httpStatus:res.status, message:`Token rejected on stop lookup (HTTP ${res.status})`, apiUrl:url, detail:res.body.slice(0,500), tokenPrefix:auth.token.slice(0,30), source:'nuvizz_live' };
   if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), apiUrl:url, source:'nuvizz_live' };
 
   let data; try { data = JSON.parse(res.body); } catch(e) { return { error:'parse_error', detail:res.body.slice(0,500), source:'nuvizz_live' }; }
