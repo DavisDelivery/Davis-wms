@@ -69,30 +69,33 @@ async function lookupStop(pro) {
   const auth = await getToken();
   if (auth.error) return { error:'auth_failed', message:auth.error, tried:auth.tried, reasons:auth.reasons, source:'nuvizz_live' };
 
-  // Try Bearer token first, then try token as authToken header, then query param
+  const basic = Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64');
   const url = `${auth.base}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
   console.log(`[LOOKUP] ${url}`);
+  const attempts = [];
 
-  // Attempt 1: Bearer token (standard)
-  let res = await rq(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
-  console.log(`[LOOKUP-Bearer] ${res.status} ${res.body.slice(0,300)}`);
+  // Attempt 1: Basic Auth directly (OpenAPI spec lists BasicAuthentication as primary security)
+  let res = await rq(url, { headers: { 'Authorization': `Basic ${basic}` } });
+  attempts.push({ method: 'Basic', status: res.status, body: res.body.slice(0, 200) });
+  console.log(`[LOOKUP-Basic] ${res.status} ${res.body.slice(0,300)}`);
 
-  // Attempt 2: If Bearer fails, try authToken header
+  // Attempt 2: Bearer token
   if (res.status === 401 || res.status === 403) {
-    res = await rq(url, { headers: { 'authToken': auth.token } });
-    console.log(`[LOOKUP-authToken] ${res.status} ${res.body.slice(0,300)}`);
+    res = await rq(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
+    attempts.push({ method: 'Bearer', status: res.status, body: res.body.slice(0, 200) });
+    console.log(`[LOOKUP-Bearer] ${res.status} ${res.body.slice(0,300)}`);
   }
 
-  // Attempt 3: If still failing, try token as query param
+  // Attempt 3: authToken custom header
   if (res.status === 401 || res.status === 403) {
-    const urlQ = `${url}?authToken=${encodeURIComponent(auth.token)}`;
-    res = await rq(urlQ);
-    console.log(`[LOOKUP-query] ${res.status} ${res.body.slice(0,300)}`);
+    res = await rq(url, { headers: { 'authToken': auth.token, 'Authorization': `Basic ${basic}` } });
+    attempts.push({ method: 'authToken+Basic', status: res.status, body: res.body.slice(0, 200) });
+    console.log(`[LOOKUP-combo] ${res.status} ${res.body.slice(0,300)}`);
   }
 
   if (res.status === 404 || res.status === 409) return { error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, apiUrl:url, detail:res.body.slice(0,300), source:'nuvizz_live' };
-  if (res.status === 401 || res.status === 403) return { error:'lookup_auth_failed', pro, httpStatus:res.status, message:`Token rejected on stop lookup (HTTP ${res.status})`, apiUrl:url, detail:res.body.slice(0,500), tokenPrefix:auth.token.slice(0,30), source:'nuvizz_live' };
-  if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), apiUrl:url, source:'nuvizz_live' };
+  if (res.status === 401 || res.status === 403) return { error:'lookup_auth_failed', pro, httpStatus:res.status, message:`All auth methods rejected (HTTP ${res.status})`, apiUrl:url, attempts, source:'nuvizz_live' };
+  if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), apiUrl:url, attempts, source:'nuvizz_live' };
 
   let data; try { data = JSON.parse(res.body); } catch(e) { return { error:'parse_error', detail:res.body.slice(0,500), source:'nuvizz_live' }; }
   return parse(data, pro);
