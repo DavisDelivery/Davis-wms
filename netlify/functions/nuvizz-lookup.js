@@ -106,9 +106,17 @@ function parse(data, pro) {
   const s = view.stop || {}; const l = view.load || {}; const x = view.stopExecutionInfo || {};
   const to = s.to || {}; const a = to.address || {}; const sch = to.schedule || {};
   const w = s.weight ? `${s.weight} ${s.weightUOM||'lbs'}` : '-';
-  let sched = '-';
-  if (sch.timeFrom && sch.timeTo) sched = `${ft(sch.timeFrom)} - ${ft(sch.timeTo)}`;
-  else if (sch.timeFrom) sched = `By ${ft(sch.timeFrom)}`;
+
+  // Get delivered time from execution info (stopExecutionInfo.to has actual delivery timestamps)
+  const xTo = x.to || {};
+  let deliveredAt = '-';
+  // Try actual arrival/departure timestamps first, then fall back to schedule
+  if (xTo.actualArrival || xTo.actualDeparture || xTo.arrivalDTTM || xTo.departureDTTM) {
+    deliveredAt = ft(xTo.actualDeparture || xTo.departureDTTM || xTo.actualArrival || xTo.arrivalDTTM);
+  } else if (x.receiveDTTM) {
+    deliveredAt = ft(x.receiveDTTM);
+  }
+
   return {
     pro, stopNbr:s.stopNbr||pro, stopId:s.stopId||'', sealNbr:s.sealNbr||'',
     bol:s.bol||'', proNumber:s.proNumber||'', accountNumber:s.accountNumber||'',
@@ -120,7 +128,7 @@ function parse(data, pro) {
     loadStatus:l.loadStatus||'', vehicleNbr:l.vehicleNbr||'',
     stop:s.stopSeq||s.altStopSeq||'-', weight:w,
     pallets:s.totalPallets||'-', cartons:s.totalCartons||'-',
-    pieces:s.totalCartons||s.totalPallets||'-', scheduled:sched,
+    pieces:s.totalCartons||s.totalPallets||'-', deliveredAt,
     stopType:s.stopType||'', reference1:s.reference1||'', reference2:s.reference2||'',
     status:ms(x.stopStatus,x.exceptionPresent), stopStatusCode:x.stopStatus||'',
     exceptionPresent:x.exceptionPresent||false,
