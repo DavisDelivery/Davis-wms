@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Davis WMS">
+<meta name="theme-color" content="#1e5b92">
+<title>Davis Delivery — Warehouse Scanner</title>
+<link rel="manifest" href="/manifest.json">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --blue:#1e5b92;--blue-dk:#174a78;--blue-lt:#e8f2fb;
+  --accent:#f0a500;--danger:#d94040;--ok:#2d9e5f;--purple:#6c5ce7;
+  --bg:#f0f4f8;--card:#ffffff;--card2:#f4f7fb;
+  --border:#dde3ec;--text:#1a2333;--muted:#6b7a8f;
+  --radius:10px;
+}
+body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-text-size-adjust:100%;overscroll-behavior:none}
+#app{max-width:500px;margin:0 auto;padding-bottom:90px}
+
+/* ── HEADER ── */
+.hdr{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-dk) 100%);color:#fff;padding:13px 15px 12px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:30}
+.hdr-l{display:flex;align-items:center;gap:10px}
+.hdr-icon{width:36px;height:36px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;box-shadow:0 2px 8px rgba(240,165,0,.35)}
+.hdr h1{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:700;line-height:1.15}
+.hdr h1 small{display:block;font-size:10px;font-weight:400;opacity:.65;letter-spacing:1.2px;text-transform:uppercase}
+.hdr-r{display:flex;align-items:center;gap:8px}
+.hdr-time{font-size:11px;font-weight:600;background:rgba(255,255,255,.15);padding:4px 11px;border-radius:20px;white-space:nowrap}
+.ver{font-size:9px;opacity:.45;font-weight:600;letter-spacing:.5px}
+
+/* ── NAV ── */
+.nav{display:flex;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:61px;z-index:20;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.nav-btn{flex:1;padding:10px 4px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;transition:color .15s,border-color .15s}
+.nav-btn.on{color:var(--blue);border-bottom-color:var(--blue)}
+
+/* ── TABS ── */
+.tab{display:none;padding:13px}.tab.on{display:block}
+
+/* ── STATS ── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:13px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:9px 4px 7px;text-align:center}
+.stat-n{font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;line-height:1}
+.stat-n.b{color:var(--blue)}.stat-n.r{color:var(--danger)}.stat-n.g{color:var(--ok)}.stat-n.o{color:var(--accent)}
+.stat-lbl{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-top:2px}
+
+/* ── CARD BOX ── */
+.box{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:13px}
+.box-hdr{background:var(--blue);color:#fff;padding:9px 14px;font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}
+.box-body{padding:13px}
+
+/* ── CAMERA ── */
+.cam-wrap{background:#0d1117;border-radius:8px;height:195px;position:relative;overflow:hidden;margin-bottom:12px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.cam-wrap video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
+.cam-ui{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2}
+.scan-frame{width:200px;height:85px;border:2px solid var(--accent);border-radius:4px;position:relative;box-shadow:0 0 30px rgba(240,165,0,.15)}
+.scan-line{position:absolute;left:0;right:0;height:2px;background:var(--accent);animation:scanline 1.8s ease-in-out infinite;opacity:.9}
+@keyframes scanline{0%{top:4px}50%{top:calc(100% - 6px)}100%{top:4px}}
+.cam-msg{color:rgba(255,255,255,.6);font-size:12px;margin-top:10px;text-align:center;font-weight:500}
+.cam-status{color:var(--accent);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:3px;min-height:16px}
+.cam-stop-btn{position:absolute;bottom:8px;right:8px;z-index:3;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:5px 11px;border-radius:20px;cursor:pointer;display:none}
+
+/* ── INPUTS ── */
+.row{display:flex;gap:8px}
+.pro-in{flex:1;height:46px;border:1px solid var(--border);border-radius:8px;padding:0 12px;font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;letter-spacing:1.5px;background:var(--card2);color:var(--text);text-transform:uppercase;outline:none;transition:border .15s}
+.pro-in:focus{border-color:var(--blue);background:#fff}
+.pro-in::placeholder{font-family:'Barlow',sans-serif;font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted);font-size:13px}
+.btn-blue{height:46px;padding:0 20px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:background .15s;white-space:nowrap;flex-shrink:0}
+.btn-blue:hover{background:var(--blue-dk)}.btn-blue:active{transform:scale(.97)}.btn-blue:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* ── RESULT CARD ── */
+.result{border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:13px;display:none}.result.show{display:block}
+.res-hdr{padding:11px 14px;display:flex;align-items:center;justify-content:space-between}
+.res-hdr.delivered{background:#edf7f2;border-bottom:1px solid #aad8be}
+.res-hdr.on-truck{background:#fffbee;border-bottom:1px solid #ffd97a}
+.res-hdr.warehouse{background:#fdf0f0;border-bottom:1px solid #f5c0c0}
+.res-hdr.planned{background:var(--blue-lt);border-bottom:1px solid #b3d4f0}
+.res-hdr.exception{background:#fdf0f0;border-bottom:1px solid #f5c0c0}
+.res-hdr.cancelled{background:#f4f4f4;border-bottom:1px solid #d0d0d0}
+.res-hdr.unknown{background:var(--card2);border-bottom:1px solid var(--border)}
+.res-status{font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:flex;align-items:center;gap:7px}
+.res-status.delivered{color:var(--ok)}.res-status.on-truck{color:#c47a00}.res-status.warehouse{color:var(--danger)}.res-status.planned{color:var(--blue)}.res-status.exception{color:var(--danger)}.res-status.cancelled{color:#888}.res-status.unknown{color:var(--muted)}
+.sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sdot.delivered{background:var(--ok)}.sdot.on-truck{background:var(--accent)}.sdot.warehouse{background:var(--danger)}.sdot.planned{background:var(--blue)}.sdot.exception{background:var(--danger)}.sdot.cancelled{background:#999}.sdot.unknown{background:var(--muted)}
+.res-pro{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:1px}
+.res-body{padding:13px 14px;background:#fff}
+.res-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.rf label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);display:block;margin-bottom:1px}
+.rf .val{font-size:13px;font-weight:600;color:var(--text);line-height:1.3}
+.rf .val.blue{color:var(--blue)}
+.rf.full{grid-column:1/-1}
+.warehouse-alert{margin-top:12px;background:#fdf0f0;border:1px solid #f5c0c0;border-radius:8px;padding:11px 12px;display:none;align-items:flex-start;gap:10px}
+.wa-icon{width:28px;height:28px;background:var(--danger);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700;flex-shrink:0}
+.wa-text{font-size:13px;line-height:1.45;color:#7a1f1f}
+.wa-text strong{display:block;font-size:14px;font-weight:600;margin-bottom:2px;color:#5a0f0f}
+.src-badge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;margin-top:10px}
+.src-live{background:#edf7f2;color:#1a6e3a;border:1px solid #aad8be}
+.src-mock{background:#fffbee;color:#a06a00;border:1px solid #ffd97a}
+.src-dot{width:6px;height:6px;border-radius:50%}
+.src-live .src-dot{background:#2d9e5f}.src-mock .src-dot{background:var(--accent)}
+
+.btn-actions{display:flex;gap:8px;margin-top:12px}
+.btn-act{flex:1;height:42px;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:all .15s}
+.btn-act.primary{background:var(--blue);color:#fff}.btn-act.primary:hover{background:var(--blue-dk)}
+.btn-act.logged{background:var(--ok);color:#fff}
+.btn-act.secondary{background:var(--card2);color:var(--blue);border:1px solid var(--border)}
+.btn-act:disabled{opacity:.55;cursor:not-allowed}
+
+/* ── LOG LIST ── */
+.log-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+.log-title{font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.log-actions{display:flex;gap:6px}
+.btn-sm{font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-lt);border:none;padding:5px 11px;border-radius:20px;cursor:pointer;font-family:'Barlow',sans-serif}
+.btn-sm.danger{color:var(--danger);background:#fdf0f0}
+.empty{text-align:center;padding:38px 16px;color:var(--muted);font-size:14px}
+.empty-icon{font-size:34px;margin-bottom:10px;opacity:.4}
+.scan-item{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:7px;display:flex;align-items:center;gap:9px}
+.si-l{flex:1;min-width:0}
+.si-pro{font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px}
+.si-sub{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.si-time{font-size:10px;font-weight:600;color:var(--muted);font-family:'Barlow Condensed',sans-serif;flex-shrink:0}
+.pill{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:20px;flex-shrink:0;white-space:nowrap}
+.pill.delivered{background:#edf7f2;color:var(--ok)}
+.pill.on-truck{background:#fffbee;color:#c47a00}
+.pill.warehouse{background:#fdf0f0;color:var(--danger)}
+.pill.planned{background:var(--blue-lt);color:var(--blue)}
+.pill.exception{background:#fdf0f0;color:var(--danger)}
+.pill.cancelled{background:#f0f0f0;color:#888}
+.pill.unknown{background:var(--card2);color:var(--muted)}
+
+/* ── REPORT TAB ── */
+.rpt-section{margin-bottom:16px}
+.rpt-title{font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;color:var(--blue)}
+.rpt-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.rpt-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px;text-align:center}
+.rpt-card .rpt-n{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:800;line-height:1}
+.rpt-card .rpt-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-top:2px}
+.driver-row{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.driver-row:last-child{margin-bottom:0;border-bottom:none;padding-bottom:0}
+.driver-name{font-weight:600;font-size:14px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between}
+.driver-stop{font-size:12px;color:var(--muted);padding:2px 0;display:flex;justify-content:space-between}
+.route-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+.route-row:last-child{border-bottom:none}
+.route-name{font-weight:600;font-size:13px}
+.route-ct{font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;color:var(--blue)}
+
+/* ── SETUP/STATUS ── */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 11px;border-radius:20px;margin-bottom:8px}
+.chip.mock{background:#fffbee;color:#a06a00;border:1px solid #ffd97a}
+.chip.live{background:#edf7f2;color:#1a6e3a;border:1px solid #aad8be}
+.chip-dot{width:7px;height:7px;border-radius:50%}
+.chip.mock .chip-dot{background:var(--accent)}.chip.live .chip-dot{background:var(--ok)}
+
+/* ── MISC ── */
+.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a2333;color:#fff;padding:10px 20px;border-radius:25px;font-size:13px;font-weight:600;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div class="hdr">
+    <div class="hdr-l">
+      <div class="hdr-icon">📦</div>
+      <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
+    </div>
+    <div class="hdr-r">
+      <span class="ver" id="ver">v2.0</span>
+      <div class="hdr-time" id="clock">--:-- --</div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <button class="nav-btn on" onclick="tab('scan',this)">📷 Scan</button>
+    <button class="nav-btn" onclick="tab('log',this)">📋 Log</button>
+    <button class="nav-btn" onclick="tab('report',this)">📊 Report</button>
+  </div>
+
+  <!-- ════ SCAN TAB ════ -->
+  <div id="tab-scan" class="tab on">
+    <div class="stats">
+      <div class="stat"><div class="stat-n b" id="s-total">0</div><div class="stat-lbl">Scanned</div></div>
+      <div class="stat"><div class="stat-n r" id="s-wh">0</div><div class="stat-lbl">In WH</div></div>
+      <div class="stat"><div class="stat-n o" id="s-truck">0</div><div class="stat-lbl">On Truck</div></div>
+      <div class="stat"><div class="stat-n g" id="s-done">0</div><div class="stat-lbl">Delivered</div></div>
+    </div>
+
+    <div class="box">
+      <div class="box-hdr">
+        <span>📷 Camera Scanner</span>
+        <span id="scan-ct-badge" style="font-size:11px;opacity:.7">0 scanned</span>
+      </div>
+      <div class="box-body">
+        <div class="cam-wrap" id="cam-wrap" onclick="camStart()">
+          <video id="cam-vid" autoplay playsinline muted></video>
+          <div class="cam-ui" id="cam-ui">
+            <div class="scan-frame"><div class="scan-line"></div></div>
+            <div class="cam-msg" id="cam-msg">Tap to activate camera</div>
+            <div class="cam-status" id="cam-st"></div>
+          </div>
+          <button class="cam-stop-btn" id="cam-stop" onclick="camStop(event)">■ Stop</button>
+        </div>
+        <div class="row">
+          <input class="pro-in" id="pro-in" type="text" placeholder="Enter PRO / stop number" maxlength="30" autocomplete="off" autocorrect="off" spellcheck="false"/>
+          <button class="btn-blue" id="lookup-btn" onclick="lookup()">Look Up</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="result" id="result">
+      <div class="res-hdr" id="res-hdr">
+        <div class="res-status" id="res-st"></div>
+        <div class="res-pro" id="res-pro"></div>
+      </div>
+      <div class="res-body">
+        <div class="res-grid">
+          <div class="rf"><label>Driver</label><div class="val blue" id="r-driver"></div></div>
+          <div class="rf"><label>Route / Load</label><div class="val" id="r-route"></div></div>
+          <div class="rf"><label>Consignee</label><div class="val" id="r-consignee"></div></div>
+          <div class="rf"><label>Stop #</label><div class="val" id="r-stop"></div></div>
+          <div class="rf full"><label>Address</label><div class="val" id="r-addr"></div></div>
+          <div class="rf"><label>Weight</label><div class="val" id="r-weight"></div></div>
+          <div class="rf"><label>Pallets / Ctns</label><div class="val" id="r-pcs"></div></div>
+          <div class="rf"><label>Scheduled</label><div class="val" id="r-sched"></div></div>
+          <div class="rf"><label>Seal #</label><div class="val" id="r-seal"></div></div>
+        </div>
+        <div id="r-src"></div>
+        <div class="warehouse-alert" id="wh-alert">
+          <div class="wa-icon">!</div>
+          <div class="wa-text">
+            <strong>Still in Warehouse</strong>
+            Assigned to <span id="wh-driver"></span> on <span id="wh-route"></span> — not yet loaded or dispatched.
+          </div>
+        </div>
+        <div class="btn-actions">
+          <button class="btn-act primary" id="log-btn" onclick="logScan()">Log Scan</button>
+          <button class="btn-act secondary" onclick="clearResult()">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ LOG TAB ════ -->
+  <div id="tab-log" class="tab">
+    <div class="log-top">
+      <div class="log-title">Session Scan Log</div>
+      <div class="log-actions">
+        <button class="btn-sm" onclick="exportCSV()">Export CSV</button>
+        <button class="btn-sm danger" onclick="clearSession()">Clear</button>
+      </div>
+    </div>
+    <div id="log-list">
+      <div class="empty"><div class="empty-icon">📦</div>No scans yet — go to Scan tab to begin.</div>
+    </div>
+  </div>
+
+  <!-- ════ REPORT TAB ════ -->
+  <div id="tab-report" class="tab">
+    <div id="rpt-content">
+      <div class="empty"><div class="empty-icon">📊</div>Scan some freight to generate a report.</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.18.6/zxing.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────
+const APP_VERSION = 'v2.0';
+let scans = [];
+let current = null;
+let camOn = false;
+let codeReader = null;
+const API = '/api';
+
+// ── Status config ──────────────────────────────
+const STATUS = {
+  delivered:  { label:'✓ Delivered',      cls:'delivered',  icon:'✓' },
+  'on-truck': { label:'● On Truck',       cls:'on-truck',   icon:'●' },
+  warehouse:  { label:'⚠ In Warehouse',   cls:'warehouse',  icon:'⚠' },
+  planned:    { label:'◎ Planned',         cls:'planned',    icon:'◎' },
+  exception:  { label:'✕ Exception',       cls:'exception',  icon:'✕' },
+  cancelled:  { label:'— Cancelled',       cls:'cancelled',  icon:'—' },
+  unknown:    { label:'? Unknown',          cls:'unknown',    icon:'?' },
+};
+
+// ── Clock ──────────────────────────────────────
+function tick(){const n=new Date(),h=n.getHours(),m=String(n.getMinutes()).padStart(2,'0');document.getElementById('clock').textContent=`${h%12||12}:${m} ${h>=12?'PM':'AM'}`}
+tick();setInterval(tick,30000);
+
+// ── Tabs ───────────────────────────────────────
+function tab(name,btn){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('tab-'+name).classList.add('on');
+  btn.classList.add('on');
+  if(name!=='scan')camStop(null);
+  if(name==='log')renderLog();
+  if(name==='report')renderReport();
+}
+
+// ── Stats ──────────────────────────────────────
+function updateStats(){
+  const wh=scans.filter(s=>s.status==='warehouse'||s.status==='planned').length;
+  const truck=scans.filter(s=>s.status==='on-truck').length;
+  const done=scans.filter(s=>s.status==='delivered').length;
+  document.getElementById('s-total').textContent=scans.length;
+  document.getElementById('s-wh').textContent=wh;
+  document.getElementById('s-truck').textContent=truck;
+  document.getElementById('s-done').textContent=done;
+  document.getElementById('scan-ct-badge').textContent=scans.length+' scanned';
+}
+
+// ── Toast ──────────────────────────────────────
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+
+// ── Lookup ─────────────────────────────────────
+async function lookup(proOverride){
+  const inp=document.getElementById('pro-in');
+  const pro=(proOverride||inp.value).trim().toUpperCase();
+  if(!pro){inp.focus();return}
+
+  // Check if already scanned
+  if(scans.find(s=>s.pro===pro)){toast('Already scanned: '+pro);return}
+
+  const btn=document.getElementById('lookup-btn');
+  btn.innerHTML='<span class="spinner"></span>';
+  btn.disabled=true;
+
+  try{
+    const res=await fetch(`${API}/nuvizz-lookup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pro})});
+    const data=await res.json();
+    if(data.error==='not_found'){
+      toast('PRO not found: '+pro);
+      showResult(pro,{...data,status:'unknown'});
+    } else {
+      showResult(pro,data);
+    }
+  }catch(e){
+    showResult(pro,{error:'network',message:'Network error',status:'unknown'});
+    toast('Network error — check connection');
+  }
+
+  btn.innerHTML='Look Up';
+  btn.disabled=false;
+}
+
+// ── Result Display ─────────────────────────────
+function showResult(pro,data){
+  const card=document.getElementById('result');
+  card.classList.add('show');
+
+  const st=data.status||'unknown';
+  const map=STATUS[st]||STATUS.unknown;
+
+  document.getElementById('res-hdr').className='res-hdr '+map.cls;
+  document.getElementById('res-st').innerHTML=`<div class="sdot ${map.cls}"></div>${map.label}`;
+  document.getElementById('res-st').className='res-status '+map.cls;
+  document.getElementById('res-pro').textContent='PRO# '+pro;
+
+  document.getElementById('r-driver').textContent=data.driver||'—';
+  document.getElementById('r-route').textContent=data.route||data.loadNbr||'—';
+  document.getElementById('r-consignee').textContent=data.consignee||'—';
+  document.getElementById('r-stop').textContent=data.stop||'—';
+  document.getElementById('r-addr').textContent=data.fullAddress||data.address||'—';
+  document.getElementById('r-weight').textContent=data.weight||'—';
+  document.getElementById('r-pcs').textContent=[data.pallets,data.cartons].filter(v=>v&&v!=='—').join(' / ')||'—';
+  document.getElementById('r-sched').textContent=data.scheduled||'—';
+  document.getElementById('r-seal').textContent=data.sealNbr||'—';
+
+  // Source badge
+  const srcEl=document.getElementById('r-src');
+  const isLive=data.source==='nuvizz_live';
+  srcEl.innerHTML=`<div class="src-badge ${isLive?'src-live':'src-mock'}"><div class="src-dot"></div>${isLive?'Live NuVizz':'Mock Data'}</div>`;
+
+  // Warehouse alert
+  const alert=document.getElementById('wh-alert');
+  if(st==='warehouse'||st==='planned'){
+    alert.style.display='flex';
+    document.getElementById('wh-driver').textContent=data.driver||'assigned driver';
+    document.getElementById('wh-route').textContent=data.route||'assigned route';
+  }else{
+    alert.style.display='none';
+  }
+
+  // Reset log btn
+  const lb=document.getElementById('log-btn');
+  lb.textContent='Log Scan';lb.className='btn-act primary';lb.disabled=false;
+
+  current={pro,...data,ts:new Date().toISOString(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+}
+
+function clearResult(){
+  document.getElementById('result').classList.remove('show');
+  document.getElementById('pro-in').value='';
+  current=null;
+}
+
+// ── Log Scan ───────────────────────────────────
+async function logScan(){
+  if(!current)return;
+  if(scans.find(s=>s.pro===current.pro)){
+    document.getElementById('log-btn').textContent='Already Logged';
+    return;
+  }
+
+  const lb=document.getElementById('log-btn');
+  lb.innerHTML='<span class="spinner"></span> Logging...';
+  lb.disabled=true;
+
+  // Fire to Firebase
+  try{await fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:current})})}catch(e){}
+
+  scans.push({...current});
+  lb.textContent='✓ Logged';lb.className='btn-act logged';lb.disabled=true;
+  document.getElementById('pro-in').value='';
+  updateStats();
+  toast('Logged: '+current.pro);
+}
+
+// ── Log Tab ────────────────────────────────────
+function renderLog(){
+  const el=document.getElementById('log-list');
+  if(!scans.length){el.innerHTML='<div class="empty"><div class="empty-icon">📦</div>No scans yet.</div>';return}
+  el.innerHTML=scans.slice().reverse().map(s=>{
+    const map=STATUS[s.status]||STATUS.unknown;
+    const label=map.label.replace(/^[✓●⚠◎✕—?]\s*/,'');
+    return `<div class="scan-item">
+      <div class="si-l">
+        <div class="si-pro">PRO# ${s.pro}</div>
+        <div class="si-sub">${s.driver||'—'} · ${s.consignee||'—'} · ${s.weight||''}</div>
+      </div>
+      <div class="pill ${map.cls}">${label}</div>
+      <div class="si-time">${s.time||''}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Report Tab ─────────────────────────────────
+function renderReport(){
+  const el=document.getElementById('rpt-content');
+  if(!scans.length){el.innerHTML='<div class="empty"><div class="empty-icon">📊</div>Scan some freight to generate a report.</div>';return}
+
+  const wh=scans.filter(s=>s.status==='warehouse'||s.status==='planned');
+  const truck=scans.filter(s=>s.status==='on-truck');
+  const done=scans.filter(s=>s.status==='delivered');
+  const exc=scans.filter(s=>s.status==='exception'||s.status==='cancelled');
+
+  // By driver
+  const byDriver={};
+  scans.forEach(s=>{const d=s.driver||'Unknown';byDriver[d]=byDriver[d]||[];byDriver[d].push(s)});
+
+  // By route
+  const byRoute={};
+  scans.forEach(s=>{const r=s.route||s.loadNbr||'Unassigned';byRoute[r]=byRoute[r]||[];byRoute[r].push(s)});
+
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const timeStr=now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+  let html=`
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${dateStr} · Generated ${timeStr}</div>
+
+    <div class="rpt-section">
+      <div class="rpt-title">Session Overview</div>
+      <div class="rpt-grid">
+        <div class="rpt-card"><div class="rpt-n" style="color:var(--blue)">${scans.length}</div><div class="rpt-lbl">Total Scanned</div></div>
+        <div class="rpt-card"><div class="rpt-n" style="color:var(--danger)">${wh.length}</div><div class="rpt-lbl">Still in WH</div></div>
+        <div class="rpt-card"><div class="rpt-n" style="color:var(--accent)">${truck.length}</div><div class="rpt-lbl">On Truck</div></div>
+        <div class="rpt-card"><div class="rpt-n" style="color:var(--ok)">${done.length}</div><div class="rpt-lbl">Delivered</div></div>
+      </div>
+    </div>`;
+
+  // Warehouse items (the important ones)
+  if(wh.length){
+    html+=`<div class="rpt-section">
+      <div class="rpt-title" style="color:var(--danger)">⚠ Freight Still in Warehouse (${wh.length})</div>
+      <div class="box"><div class="box-body" style="padding:10px">
+        ${wh.map(s=>`<div class="driver-stop" style="padding:5px 0;border-bottom:1px solid var(--border)">
+          <span><strong>${s.pro}</strong> · ${s.consignee||'—'}</span>
+          <span style="color:var(--blue);font-weight:600">${s.driver||'—'}</span>
+        </div>`).join('')}
+      </div></div>
+    </div>`;
+  }
+
+  // By driver breakdown
+  html+=`<div class="rpt-section">
+    <div class="rpt-title">By Driver</div>
+    <div class="box"><div class="box-body">
+      ${Object.entries(byDriver).sort((a,b)=>b[1].length-a[1].length).map(([d,items])=>{
+        const dWh=items.filter(i=>i.status==='warehouse'||i.status==='planned').length;
+        const dTruck=items.filter(i=>i.status==='on-truck').length;
+        const dDone=items.filter(i=>i.status==='delivered').length;
+        return `<div class="driver-row">
+          <div class="driver-name">${d} <span style="font-size:12px;color:var(--muted);font-weight:400">${items.length} stops</span></div>
+          <div style="display:flex;gap:10px;font-size:11px;color:var(--muted);margin-bottom:4px">
+            ${dWh?`<span style="color:var(--danger)">⚠ ${dWh} in WH</span>`:''}
+            ${dTruck?`<span style="color:var(--accent)">● ${dTruck} on truck</span>`:''}
+            ${dDone?`<span style="color:var(--ok)">✓ ${dDone} delivered</span>`:''}
+          </div>
+          ${items.map(i=>`<div class="driver-stop">
+            <span>PRO# ${i.pro} · ${i.consignee||'—'}</span>
+            <span class="pill ${(STATUS[i.status]||STATUS.unknown).cls}" style="font-size:8px;padding:2px 6px">${(STATUS[i.status]||STATUS.unknown).cls}</span>
+          </div>`).join('')}
+        </div>`;
+      }).join('')}
+    </div></div>
+  </div>`;
+
+  // By route breakdown
+  html+=`<div class="rpt-section">
+    <div class="rpt-title">By Route / Load</div>
+    <div class="box"><div class="box-body">
+      ${Object.entries(byRoute).sort((a,b)=>b[1].length-a[1].length).map(([r,items])=>`<div class="route-row">
+        <span class="route-name">${r}</span>
+        <span class="route-ct">${items.length} stops</span>
+      </div>`).join('')}
+    </div></div>
+  </div>`;
+
+  // Export buttons
+  html+=`<div style="display:flex;gap:8px;margin-top:8px">
+    <button class="btn-act primary" style="flex:1" onclick="exportCSV()">Export CSV</button>
+    <button class="btn-act secondary" style="flex:1" onclick="exportReport()">Copy Report</button>
+  </div>`;
+
+  el.innerHTML=html;
+}
+
+// ── Export CSV ─────────────────────────────────
+function exportCSV(){
+  if(!scans.length)return;
+  const cols=['PRO','Stop#','Seal#','Driver','Route','Load#','Consignee','Address','City','State','Zip','Weight','Pallets','Cartons','Scheduled','Status','Status Code','Source','Scanned At'];
+  const rows=scans.map(s=>[s.pro,s.stop,s.sealNbr,s.driver,s.route,s.loadNbr,s.consignee,s.address||s.fullAddress,s.city,s.state,s.zip,s.weight,s.pallets,s.cartons,s.scheduled,s.status,s.stopStatusCode,s.source,s.time]);
+  const csv=[cols,...rows].map(r=>r.map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='davis_warehouse_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  toast('CSV exported');
+}
+
+// ── Export Report Text ─────────────────────────
+function exportReport(){
+  if(!scans.length)return;
+  const wh=scans.filter(s=>s.status==='warehouse'||s.status==='planned');
+  const now=new Date();
+  let txt=`DAVIS DELIVERY — WAREHOUSE SCAN REPORT\n${now.toLocaleDateString()} ${now.toLocaleTimeString()}\n${'─'.repeat(40)}\n`;
+  txt+=`Total Scanned: ${scans.length}\nIn Warehouse: ${wh.length}\nOn Truck: ${scans.filter(s=>s.status==='on-truck').length}\nDelivered: ${scans.filter(s=>s.status==='delivered').length}\n\n`;
+  if(wh.length){
+    txt+=`⚠ STILL IN WAREHOUSE:\n`;
+    wh.forEach(s=>txt+=`  ${s.pro} — ${s.consignee} — ${s.driver} (${s.route})\n`);
+    txt+='\n';
+  }
+  txt+=`ALL SCANS:\n`;
+  scans.forEach(s=>txt+=`  ${s.pro} | ${s.status.toUpperCase().padEnd(10)} | ${s.driver||'—'} | ${s.consignee||'—'} | ${s.weight||'—'}\n`);
+
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(txt).then(()=>toast('Report copied to clipboard'));
+  }else{
+    // Fallback
+    const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+    toast('Report copied to clipboard');
+  }
+}
+
+// ── Clear Session ──────────────────────────────
+function clearSession(){
+  if(!scans.length)return;
+  if(!confirm(`Clear all ${scans.length} scans from this session?`))return;
+  scans=[];current=null;
+  updateStats();renderLog();
+  toast('Session cleared');
+}
+
+// ── Camera ─────────────────────────────────────
+async function camStart(){
+  if(camOn)return;
+  const msg=document.getElementById('cam-msg');
+  const st=document.getElementById('cam-st');
+  const vid=document.getElementById('cam-vid');
+  const stopBtn=document.getElementById('cam-stop');
+
+  try{
+    msg.textContent='Starting camera...';
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280}}});
+    vid.srcObject=stream;vid.style.display='block';
+    camOn=true;stopBtn.style.display='block';
+    msg.textContent='Align barcode in frame';
+    st.textContent='Scanning...';
+
+    if(window.ZXing){
+      codeReader=new ZXing.BrowserMultiFormatReader();
+      codeReader.decodeFromVideoDevice(null,'cam-vid',(result,err)=>{
+        if(result){
+          const code=result.getText();
+          document.getElementById('pro-in').value=code;
+          st.textContent='✓ '+code;
+          msg.textContent='Code captured!';
+          lookup(code);
+          camStop(null);
+        }
+      });
+    }else{
+      st.textContent='Type PRO below ↓';
+    }
+  }catch(e){
+    msg.textContent='Camera unavailable — use manual entry below';
+    st.textContent='';camOn=false;
+  }
+}
+
+function camStop(e){
+  if(e)e.stopPropagation();
+  if(codeReader){try{codeReader.reset()}catch(_){}codeReader=null}
+  const vid=document.getElementById('cam-vid');
+  if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
+  vid.style.display='none';
+  document.getElementById('cam-stop').style.display='none';
+  document.getElementById('cam-msg').textContent='Tap to activate camera';
+  document.getElementById('cam-st').textContent='';
+  camOn=false;
+}
+
+// ── Keyboard ───────────────────────────────────
+document.getElementById('pro-in').addEventListener('keypress',e=>{if(e.key==='Enter')lookup()});
+</script>
+</body>
+</html>

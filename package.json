@@ -1,0 +1,17 @@
+{
+  "name": "davis-warehouse-wms",
+  "version": "2.0.0",
+  "description": "Davis Delivery Warehouse Scanner — NuVizz v7 API integration",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
