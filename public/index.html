@@ -337,14 +337,16 @@ async function lookup(proOverride){
   try{
     const res=await fetch(`${API}/nuvizz-lookup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pro})});
     const data=await res.json();
-    if(data.error==='not_found'){
-      toast('PRO not found: '+pro);
-      showResult(pro,{...data,status:'unknown'});
+    if(data.error){
+      const msg=data.message||data.error;
+      toast(msg);
+      console.log('NuVizz response:',JSON.stringify(data,null,2));
+      showResult(pro,{...data,status:data.status||'unknown',_debug:data});
     } else {
       showResult(pro,data);
     }
   }catch(e){
-    showResult(pro,{error:'network',message:'Network error',status:'unknown'});
+    showResult(pro,{error:'network',message:'Network error: '+e.message,status:'unknown'});
     toast('Network error — check connection');
   }
 
