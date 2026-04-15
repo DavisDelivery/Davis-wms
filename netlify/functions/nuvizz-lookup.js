@@ -66,19 +66,28 @@ async function tryStopLookup(pro, quick) {
 
   // ── Flag 1b: Appointment delivery ──
   // ONLY flag on the exact Uline comment: "NTFY OF DELIVERY-APPT REQD"
-  // NuVizz apptInfo (READY_TO_SCHEDULE etc.) is their internal system — ignore it.
-  const comments = stop.comments || {};
-  const commentList = comments.comment || comments.comments || [];
-  const allComments = Array.isArray(commentList) ? commentList : [commentList];
+  const rawComments = stop.comments || [];
+  // NuVizz may return comments as array directly, or nested in an object
+  let allComments = [];
+  if (Array.isArray(rawComments)) {
+    allComments = rawComments;
+  } else if (typeof rawComments === 'object') {
+    allComments = rawComments.comment || rawComments.comments || [];
+    if (!Array.isArray(allComments)) allComments = [allComments];
+  }
+
   let apptComment = null;
   for (const c of allComments) {
     if (!c) continue;
-    const desc = (c.commentDescription || c.description || '').toUpperCase();
-    if (desc.includes('NTFY OF DELIVERY-APPT REQD')) {
-      apptComment = c.commentDescription || c.description;
+    const desc = (c.commentDescription || c.description || c.text || '');
+    if (desc.toUpperCase().includes('NTFY OF DELIVERY-APPT REQD')) {
+      apptComment = desc;
       break;
     }
   }
+  // Log what we found for debugging
+  console.log(`[COMMENTS] pro:${pro} count:${allComments.length} appt:${!!apptComment} raw:${JSON.stringify(rawComments).slice(0,300)}`);
+
   if (apptComment) {
     result.flags = result.flags || [];
     result.flags.push({
