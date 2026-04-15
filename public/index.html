@@ -93,6 +93,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .res-hdr.exception{background:#fdf0f0;border-bottom:1px solid #f5c0c0}
 .res-hdr.cancelled{background:#f4f4f4;border-bottom:1px solid #d0d0d0}
 .res-hdr.unknown{background:var(--card2);border-bottom:1px solid var(--border)}
+.res-hdr.appt-hdr{background:#fffbee;border-bottom:1px solid #ffd97a}
 .res-status{font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:flex;align-items:center;gap:7px}
 .res-status.delivered{color:var(--ok)}.res-status.on-truck{color:#c47a00}.res-status.warehouse{color:var(--danger)}.res-status.planned{color:var(--blue)}.res-status.exception{color:var(--danger)}.res-status.cancelled{color:#888}.res-status.unknown{color:var(--muted)}
 .sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
@@ -394,20 +395,27 @@ function showResult(pro,data){
   const card=document.getElementById('result');
   card.classList.add('show');
 
-  // If forgotten, override status display
+  const isAppt = data.isAppointment;
   const isForgotten = data.isForgotten;
   const st=data.status||'unknown';
   const map=STATUS[st]||STATUS.unknown;
 
-  // If forgotten, force red header regardless of NuVizz status
-  if (isForgotten) {
+  // Priority: Appointment (yellow) > Forgotten (red) > Normal status
+  if (isAppt) {
+    document.getElementById('res-hdr').className='res-hdr appt-hdr';
+    document.getElementById('res-st').innerHTML='<div class="sdot" style="background:var(--accent)"></div>🔔 APPT REQUIRED';
+    document.getElementById('res-st').className='res-status';
+    document.getElementById('res-st').style.color='#a06a00';
+  } else if (isForgotten) {
     document.getElementById('res-hdr').className='res-hdr warehouse';
-    document.getElementById('res-st').innerHTML='<div class="sdot warehouse"></div>⚠ FORGOTTEN FREIGHT';
+    document.getElementById('res-st').innerHTML='<div class="sdot warehouse"></div>⚠ POSSIBLY FORGOTTEN';
     document.getElementById('res-st').className='res-status warehouse';
+    document.getElementById('res-st').style.color='';
   } else {
     document.getElementById('res-hdr').className='res-hdr '+map.cls;
     document.getElementById('res-st').innerHTML=`<div class="sdot ${map.cls}"></div>${map.label}`;
     document.getElementById('res-st').className='res-status '+map.cls;
+    document.getElementById('res-st').style.color='';
   }
   document.getElementById('res-pro').textContent='PRO# '+pro;
 
@@ -472,7 +480,7 @@ function showResult(pro,data){
   }
 
   // Override status for forgotten items in the data we store
-  const effectiveStatus = isForgotten ? 'warehouse' : st;
+  const effectiveStatus = isAppt ? 'appointment' : (isForgotten ? 'warehouse' : st);
 
   // Reset log btn
   const lb=document.getElementById('log-btn');
@@ -739,12 +747,25 @@ async function handleScan(code) {
         updateStats();
         fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
       }
-      // Update the card below WITHOUT calling showResult (which disrupts Quagga)
+      // Update the card inline (don't call showResult which can disrupt scanner)
+      const isAppt = data.isAppointment;
+      const isForgotten = data.isForgotten;
       const st = data.status||'unknown';
       const map = STATUS[st]||STATUS.unknown;
-      document.getElementById('res-hdr').className = 'res-hdr '+map.cls;
-      document.getElementById('res-st').innerHTML = `<div class="sdot ${map.cls}"></div>${map.label}`;
-      document.getElementById('res-st').className = 'res-status '+map.cls;
+
+      if (isAppt) {
+        document.getElementById('res-hdr').className = 'res-hdr appt-hdr';
+        document.getElementById('res-st').innerHTML = '🔔 APPT REQUIRED';
+        document.getElementById('res-st').style.color = '#a06a00';
+      } else if (isForgotten) {
+        document.getElementById('res-hdr').className = 'res-hdr warehouse';
+        document.getElementById('res-st').innerHTML = '⚠ POSSIBLY FORGOTTEN';
+        document.getElementById('res-st').style.color = '';
+      } else {
+        document.getElementById('res-hdr').className = 'res-hdr '+map.cls;
+        document.getElementById('res-st').innerHTML = `<div class="sdot ${map.cls}"></div>${map.label}`;
+        document.getElementById('res-st').style.color = '';
+      }
       document.getElementById('res-pro').textContent = 'PRO# '+(data.pro||code);
       document.getElementById('r-driver').textContent = data.driver||'-';
       document.getElementById('r-route').textContent = data.route||data.loadNbr||'-';
@@ -758,9 +779,40 @@ async function handleScan(code) {
       document.getElementById('r-sched').textContent = data.deliveredAt||'-';
       document.getElementById('r-seal').textContent = data.sealNbr||'-';
       document.getElementById('r-src').innerHTML = '<div class="src-badge src-live"><div class="src-dot"></div>Live NuVizz</div>';
-      document.getElementById('flags-area').innerHTML = '';
+      // Show flags if any
+      const flags = data.flags || [];
+      if (flags.length > 0) {
+        const FLAG_TITLES = {'wrong_day':'📅 Wrong Day','partial_delivery':'📦 Partial Delivery','route_active':'🚚 Route Active','appointment':'🔔 Appt Required'};
+        document.getElementById('flags-area').innerHTML = flags.map(f => {
+          const sev = f.type==='appointment'?'appt':(f.severity||'high');
+          return `<div class="flag-alert ${sev}"><div class="flag-icon ${sev}">${f.type==='appointment'?'🔔':'!'}</div><div class="flag-text"><strong>${FLAG_TITLES[f.type]||f.type}</strong> ${f.message}</div></div>`;
+        }).join('');
+      } else {
+        document.getElementById('flags-area').innerHTML = '';
+      }
 
-      const flag = data.isForgotten ? ' ⚠ FORGOTTEN' : (data.isAppointment ? ' 🔔 APPT' : '');
+      // Background: do the full load check for forgotten freight flags
+      if (data.loadNbr && data.loadNbr !== '-' && !isAppt) {
+        fetch(`${API}/nuvizz-lookup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pro:data.pro||code, quick:false})})
+          .then(r=>r.json()).then(fullData=>{
+            if (fullData.isForgotten && !fullData.isAppointment) {
+              // Update the card header to show forgotten
+              document.getElementById('res-hdr').className = 'res-hdr warehouse';
+              document.getElementById('res-st').innerHTML = '⚠ POSSIBLY FORGOTTEN';
+              // Update the scan entry
+              const idx = scans.findIndex(s=>s.pro===(fullData.pro||data.pro));
+              if (idx>=0) { scans[idx].isForgotten=true; scans[idx].flags=fullData.flags; scans[idx].status='warehouse'; updateStats(); }
+              // Show flags
+              const fFlags = fullData.flags||[];
+              if (fFlags.length>0) {
+                const FT = {'wrong_day':'📅 Wrong Day','partial_delivery':'📦 Partial Delivery','route_active':'🚚 Route Active','appointment':'🔔 Appt Required'};
+                document.getElementById('flags-area').innerHTML = fFlags.filter(f=>f.type!=='appointment').map(f => `<div class="flag-alert high"><div class="flag-icon high">!</div><div class="flag-text"><strong>${FT[f.type]||f.type}</strong> ${f.message}</div></div>`).join('');
+              }
+            }
+          }).catch(()=>{});
+      }
+
+      const flag = isAppt ? ' 🔔 APPT' : (isForgotten ? ' ⚠ FORGOTTEN' : '');
       const name = data.consignee && data.consignee !== '-' ? data.consignee : code;
       lastEl.innerHTML = `<span class="scan-code">${data.pro || code}</span> <span class="scan-result">✓ ${name}${flag}</span>`;
       document.getElementById('scan-hint').textContent = `Point at PRO # · ${scans.length} logged`;
