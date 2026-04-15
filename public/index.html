@@ -227,7 +227,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
           <button class="cam-stop-btn" id="cam-stop" onclick="camStop(event)">■ Stop</button>
         </div>
         <div class="row">
-          <input class="pro-in" id="pro-in" type="text" placeholder="Enter PRO / stop number" maxlength="30" autocomplete="off" autocorrect="off" spellcheck="false"/>
+          <input class="pro-in" id="pro-in" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Enter PRO number" maxlength="30" autocomplete="off" autocorrect="off" spellcheck="false"/>
           <button class="btn-blue" id="lookup-btn" onclick="lookup()">Look Up</button>
         </div>
       </div>
@@ -286,7 +286,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 
 <div class="toast" id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.18.6/zxing.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
 const APP_VERSION = 'v3.4';
@@ -654,96 +654,127 @@ async function camStart(){
   const st=document.getElementById('cam-st');
   const vid=document.getElementById('cam-vid');
   const stopBtn=document.getElementById('cam-stop');
+  const wrap=document.getElementById('cam-wrap');
 
-  try{
-    msg.textContent='Starting camera...';
-    // Request high-res rear camera for barcode reading
-    const stream=await navigator.mediaDevices.getUserMedia({
-      video:{
-        facingMode:'environment',
-        width:{ideal:1920,min:1280},
-        height:{ideal:1080,min:720},
+  msg.textContent='Starting camera...';
+
+  // Try Quagga2 first (best for 1D barcodes on mobile)
+  if(window.Quagga){
+    try{
+      // Create a container for Quagga inside the cam-wrap
+      let qContainer=document.getElementById('quagga-container');
+      if(!qContainer){
+        qContainer=document.createElement('div');
+        qContainer.id='quagga-container';
+        qContainer.style.cssText='position:absolute;inset:0;width:100%;height:100%;';
+        wrap.insertBefore(qContainer,wrap.firstChild);
       }
-    });
-    vid.srcObject=stream;
-    vid.style.display='block';
-    await vid.play();
-    camOn=true;
-    stopBtn.style.display='block';
-    msg.textContent='Point at barcode';
-    st.textContent='Scanning...';
+      qContainer.innerHTML='';
+      qContainer.style.display='block';
 
-    // Use native BarcodeDetector if available (iOS Safari 17+, Chrome 83+)
-    if ('BarcodeDetector' in window) {
-      console.log('[SCAN] Using native BarcodeDetector');
-      const detector = new BarcodeDetector({
-        formats: ['code_128','code_39','ean_13','ean_8','itf','codabar','upc_a','upc_e']
+      await new Promise((resolve,reject)=>{
+        Quagga.init({
+          inputStream:{
+            name:'Live',
+            type:'LiveStream',
+            target:qContainer,
+            constraints:{
+              facingMode:'environment',
+              width:{ideal:1280},
+              height:{ideal:720},
+            },
+          },
+          decoder:{
+            readers:['code_128_reader','code_39_reader','ean_reader','i2of5_reader','codabar_reader','upc_reader'],
+            multiple:false,
+          },
+          locate:true,
+          frequency:10,
+        },(err)=>{
+          if(err){reject(err);return;}
+          resolve();
+        });
       });
-      scanInterval = setInterval(async () => {
-        if (!camOn || vid.readyState < 2) return;
-        try {
-          const barcodes = await detector.detect(vid);
-          if (barcodes.length > 0) {
-            const code = barcodes[0].rawValue;
-            if (code && code.length >= 4) {
+
+      Quagga.start();
+      camOn=true;
+      stopBtn.style.display='block';
+      msg.textContent='Point at barcode';
+      st.textContent='Scanning...';
+
+      // Style the Quagga video
+      const qVid=qContainer.querySelector('video');
+      if(qVid){
+        qVid.style.cssText='width:100%;height:100%;object-fit:cover;';
+      }
+      const qCanvas=qContainer.querySelector('canvas');
+      if(qCanvas) qCanvas.style.display='none';
+
+      Quagga.onDetected((result)=>{
+        if(!camOn)return;
+        const code=result.codeResult.code;
+        if(code&&code.length>=4){
+          document.getElementById('pro-in').value=code;
+          st.textContent='✓ '+code;
+          msg.textContent='Barcode captured!';
+          if(navigator.vibrate)navigator.vibrate(100);
+          camStop(null);
+          lookup(code);
+        }
+      });
+
+      return;
+    }catch(e){
+      console.error('[QUAGGA]',e);
+      // Fall through to native BarcodeDetector
+    }
+  }
+
+  // Fallback: native BarcodeDetector
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}
+    });
+    vid.srcObject=stream;vid.style.display='block';
+    await vid.play();
+    camOn=true;stopBtn.style.display='block';
+    msg.textContent='Point at barcode';st.textContent='Scanning...';
+
+    if('BarcodeDetector' in window){
+      const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','itf','codabar','upc_a','upc_e']});
+      scanInterval=setInterval(async()=>{
+        if(!camOn||vid.readyState<2)return;
+        try{
+          const barcodes=await detector.detect(vid);
+          if(barcodes.length>0){
+            const code=barcodes[0].rawValue;
+            if(code&&code.length>=4){
               clearInterval(scanInterval);
-              document.getElementById('pro-in').value = code;
-              st.textContent = '✓ ' + code;
-              msg.textContent = 'Barcode captured!';
-              // Vibrate on success if available
-              if (navigator.vibrate) navigator.vibrate(100);
-              lookup(code);
-              camStop(null);
+              document.getElementById('pro-in').value=code;
+              st.textContent='✓ '+code;msg.textContent='Barcode captured!';
+              if(navigator.vibrate)navigator.vibrate(100);
+              camStop(null);lookup(code);
             }
           }
-        } catch(e) { /* frame not ready */ }
-      }, 250); // scan 4x per second
-    }
-    // Fallback: ZXing library
-    else if (window.ZXing) {
-      console.log('[SCAN] Using ZXing fallback');
-      codeReader = new ZXing.BrowserMultiFormatReader();
-      // Use canvas-based decoding for better reliability
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      scanInterval = setInterval(() => {
-        if (!camOn || vid.readyState < 2) return;
-        canvas.width = vid.videoWidth;
-        canvas.height = vid.videoHeight;
-        ctx.drawImage(vid, 0, 0);
-        try {
-          const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-          const binary = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminance));
-          const result = codeReader.decodeBitmap(binary);
-          if (result) {
-            clearInterval(scanInterval);
-            const code = result.getText();
-            document.getElementById('pro-in').value = code;
-            st.textContent = '✓ ' + code;
-            msg.textContent = 'Barcode captured!';
-            if (navigator.vibrate) navigator.vibrate(100);
-            lookup(code);
-            camStop(null);
-          }
-        } catch(e) { /* no barcode in frame */ }
-      }, 300);
-    }
-    else {
+        }catch(e){}
+      },250);
+    }else{
       st.textContent='Manual entry ↓';
-      msg.textContent='No barcode scanner available — type PRO below';
+      msg.textContent='Barcode scanner not supported — type PRO below';
     }
   }catch(e){
-    msg.textContent='Camera blocked — use manual entry below';
-    st.textContent='';
-    camOn=false;
-    console.error('[CAM]', e);
+    msg.textContent='Camera blocked — use manual entry';st.textContent='';camOn=false;
   }
 }
 
 function camStop(e){
   if(e)e.stopPropagation();
   if(scanInterval){clearInterval(scanInterval);scanInterval=null;}
-  if(codeReader){try{codeReader.reset()}catch(_){}codeReader=null}
+  // Stop Quagga
+  if(window.Quagga){try{Quagga.stop();}catch(_){}}
+  const qc=document.getElementById('quagga-container');
+  if(qc)qc.style.display='none';
+  // Stop native camera
   const vid=document.getElementById('cam-vid');
   if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
   vid.style.display='none';

@@ -26,31 +26,17 @@ function basicHeader() {
   return { 'Authorization': `Basic ${Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64')}` };
 }
 
-// ── Stop Lookup (with auto zero-padding for Uline labels) ──
+// ── Stop Lookup (auto zero-pad for Uline labels) ──
 async function lookupStop(pro) {
-  // Try the PRO as-is first
-  let res = await tryStopLookup(pro);
-  
-  // If not found and PRO is numeric, try with leading zeros
-  // Uline labels show "7105230" but NuVizz needs "007105230"
-  if (res.notFound && /^\d+$/.test(pro)) {
-    // Try padding to 9 digits (00 + 7 digit PRO)
-    const padded9 = pro.padStart(9, '0');
-    if (padded9 !== pro) {
-      console.log(`[PAD] Trying ${padded9}`);
-      const res2 = await tryStopLookup(padded9);
-      if (!res2.notFound) return res2;
-    }
-    // Try padding to 10 digits
-    const padded10 = pro.padStart(10, '0');
-    if (padded10 !== padded9) {
-      console.log(`[PAD] Trying ${padded10}`);
-      const res3 = await tryStopLookup(padded10);
-      if (!res3.notFound) return res3;
-    }
+  // Uline labels show 7-digit PROs but NuVizz needs 9 digits with 00 prefix
+  // Always pad numeric PROs to 9 digits
+  let paddedPro = pro;
+  if (/^\d+$/.test(pro) && pro.length < 9) {
+    paddedPro = pro.padStart(9, '0');
+    console.log(`[PAD] ${pro} → ${paddedPro}`);
   }
   
-  return res;
+  return await tryStopLookup(paddedPro);
 }
 
 async function tryStopLookup(pro) {
