@@ -669,14 +669,18 @@ let lastScannedCode = '';
 let lastScanTime = 0;
 let scanCount = 0;
 
-// Check if a barcode looks like a valid Uline PRO (numeric only, 5-10 digits)
+// Check if a barcode is a valid Uline PRO number
+// Uline PROs are 7 digits (e.g., 7105230). The label also has longer OG numbers,
+// order numbers, DO numbers, PO numbers — we only want the 7-digit PRO.
 function isValidPRO(code) {
-  if (!code || code.length < 5) return false;
-  // Reject OG order numbers, alpha-heavy codes, and non-numeric strings
-  if (/^OG/i.test(code)) return false;
-  if (/^[A-Z]{2,}/i.test(code)) return false;
+  if (!code) return false;
   // Must be all digits
-  return /^\d+$/.test(code);
+  if (!/^\d+$/.test(code)) return false;
+  // Uline PROs are 6-8 digits. Reject anything shorter or longer.
+  // This filters out: OG numbers (13 digits), DO numbers (13 digits), 
+  // ORD numbers (8+ digits), PO numbers (9 digits), short partials
+  if (code.length < 6 || code.length > 8) return false;
+  return true;
 }
 
 async function handleScan(code) {

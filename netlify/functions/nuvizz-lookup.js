@@ -84,7 +84,8 @@ async function tryStopLookup(pro) {
     result.apptStatus = apptStatus;
   }
 
-  // Check comments for "NTFY OF DELIVERY-APPT REQD" (exact Uline code) and similar
+  // Check comments for the exact Uline appointment code:
+  // "SPL-INSTR-TEXT: NTFY OF DELIVERY-APPT REQD"
   const comments = stop.comments || {};
   const commentList = comments.comment || comments.comments || [];
   const allComments = Array.isArray(commentList) ? commentList : [commentList];
@@ -92,12 +93,9 @@ async function tryStopLookup(pro) {
   for (const c of allComments) {
     if (!c) continue;
     const desc = (c.commentDescription || c.description || '').toUpperCase();
-    const cType = (c.commentType || c.cmtType || '').toUpperCase();
-    // Exact Uline code: "NTFY OF DELIVERY-APPT REQD"
-    if (desc.includes('NTFY OF DELIVERY') || desc.includes('APPT REQ') ||
-        desc.includes('NTFY') || desc.includes('APPT') ||
-        cType.includes('NTFY') || cType.includes('APPT')) {
-      apptComment = c.commentDescription || c.description || cType;
+    // Only match the specific Uline appointment code
+    if (desc.includes('NTFY OF DELIVERY-APPT REQD') || desc.includes('NTFY OF DELIVERY - APPT REQD')) {
+      apptComment = c.commentDescription || c.description;
       break;
     }
   }
@@ -112,45 +110,26 @@ async function tryStopLookup(pro) {
     result.apptNote = apptComment;
   }
 
-  // Also check ALL string fields on the stop for the Uline code
-  // It could be in reference1, reference2, srvcLevel, profile, consAttribute, customAttributes, or stopDetails
+  // Also check stopAccessorials and customAttributes for the exact code
   const searchFields = [
-    stop.reference1, stop.reference2, stop.srvcLevel, stop.profile,
-    stop.consAttribute, stop.freightTerms, stop.serviceType,
     JSON.stringify(stop.customAttributes || {}),
-    JSON.stringify(stop.stopDetails || {}),
     JSON.stringify(stop.stopAccessorials || {}),
-    JSON.stringify(stop.privateNotes || {}),
   ];
   if (!result.isAppointment) {
     for (const f of searchFields) {
       if (!f) continue;
-      const upper = f.toUpperCase();
-      if (upper.includes('NTFY OF DELIVERY') || upper.includes('APPT REQ') ||
-          (upper.includes('NTFY') && upper.includes('APPT'))) {
+      if (f.toUpperCase().includes('NTFY OF DELIVERY-APPT REQD')) {
         result.flags = result.flags || [];
-        result.flags.push({
-          type: 'appointment',
-          severity: 'high',
-          message: 'Appointment required — NTFY OF DELIVERY-APPT REQD',
-        });
+        result.flags.push({ type: 'appointment', severity: 'high', message: 'Appointment required — NTFY OF DELIVERY-APPT REQD' });
         result.isAppointment = true;
         break;
       }
     }
   }
 
-  // Log raw data for debugging where appointment codes appear
-  console.log(`[APPT-DEBUG] pro:${pro} isAppt:${result.isAppointment}`);
-  console.log(`[APPT-DEBUG] apptInfo:`, JSON.stringify(appt));
-  console.log(`[APPT-DEBUG] comments:`, JSON.stringify(allComments).slice(0, 800));
-  console.log(`[APPT-DEBUG] ref1:${stop.reference1||''} ref2:${stop.reference2||''} srvcLevel:${stop.srvcLevel||''} profile:${stop.profile||''}`);
-  console.log(`[APPT-DEBUG] consAttribute:${stop.consAttribute||''} freightTerms:${stop.freightTerms||''} serviceType:${stop.serviceType||''}`);
-  if (stop.customAttributes) console.log(`[APPT-DEBUG] customAttrs:`, JSON.stringify(stop.customAttributes).slice(0, 500));
-  if (stop.stopDetails) console.log(`[APPT-DEBUG] stopDetails:`, JSON.stringify(stop.stopDetails).slice(0, 500));
-  if (stop.privateNotes) console.log(`[APPT-DEBUG] privateNotes:`, JSON.stringify(stop.privateNotes).slice(0, 300));
-
-  // ── Flag 2 & 3: Need load info for route-level checks ──
+  // ── Flag 2 & 3: Route-level checks (load info) ──
+  // Return the stop result immediately, then enrich with load data
+  // This makes the initial response fast — flags get added if load data comes back
   const loadNbr = result.loadNbr;
   if (loadNbr && loadNbr !== '-') {
     try {
