@@ -75,7 +75,7 @@ async function lookupStop(pro) {
     result.apptStatus = apptStatus;
   }
 
-  // Check comments for NTFY/APPT/appointment codes
+  // Check comments for "NTFY OF DELIVERY-APPT REQD" (exact Uline code) and similar
   const comments = stop.comments || {};
   const commentList = comments.comment || comments.comments || [];
   const allComments = Array.isArray(commentList) ? commentList : [commentList];
@@ -84,9 +84,10 @@ async function lookupStop(pro) {
     if (!c) continue;
     const desc = (c.commentDescription || c.description || '').toUpperCase();
     const cType = (c.commentType || c.cmtType || '').toUpperCase();
-    // Look for NTFY, APPT, appointment, notification codes
-    if (/NTFY|APPT|APPOINTMENT|NOTIFY|DEL\.?\s*APPT|DELIVERY\s*APP/i.test(desc) ||
-        /NTFY|APPT/i.test(cType)) {
+    // Exact Uline code: "NTFY OF DELIVERY-APPT REQD"
+    if (desc.includes('NTFY OF DELIVERY') || desc.includes('APPT REQ') ||
+        desc.includes('NTFY') || desc.includes('APPT') ||
+        cType.includes('NTFY') || cType.includes('APPT')) {
       apptComment = c.commentDescription || c.description || cType;
       break;
     }
@@ -96,27 +97,33 @@ async function lookupStop(pro) {
     result.flags.push({
       type: 'appointment',
       severity: 'high',
-      message: `Appointment delivery — "${apptComment}"`,
+      message: `Appointment required — ${apptComment}`,
     });
     result.isAppointment = true;
     result.apptNote = apptComment;
   }
 
-  // Also check customAttributes and reference fields for NTFY/APPT codes
-  const custAttrs = stop.customAttributes || {};
-  const ref1 = (stop.reference1 || '').toUpperCase();
-  const ref2 = (stop.reference2 || '').toUpperCase();
-  const srvcLevel = (stop.srvcLevel || '').toUpperCase();
-  const profile = (stop.profile || '').toUpperCase();
-  const allFields = [ref1, ref2, srvcLevel, profile, JSON.stringify(custAttrs).toUpperCase()];
+  // Also check ALL string fields on the stop for the Uline code
+  // It could be in reference1, reference2, srvcLevel, profile, consAttribute, customAttributes, or stopDetails
+  const searchFields = [
+    stop.reference1, stop.reference2, stop.srvcLevel, stop.profile,
+    stop.consAttribute, stop.freightTerms, stop.serviceType,
+    JSON.stringify(stop.customAttributes || {}),
+    JSON.stringify(stop.stopDetails || {}),
+    JSON.stringify(stop.stopAccessorials || {}),
+    JSON.stringify(stop.privateNotes || {}),
+  ];
   if (!result.isAppointment) {
-    for (const f of allFields) {
-      if (/NTFY|APPT|APPOINTMENT/.test(f)) {
+    for (const f of searchFields) {
+      if (!f) continue;
+      const upper = f.toUpperCase();
+      if (upper.includes('NTFY OF DELIVERY') || upper.includes('APPT REQ') ||
+          (upper.includes('NTFY') && upper.includes('APPT'))) {
         result.flags = result.flags || [];
         result.flags.push({
           type: 'appointment',
           severity: 'high',
-          message: `Appointment delivery detected in order details`,
+          message: 'Appointment required — NTFY OF DELIVERY-APPT REQD',
         });
         result.isAppointment = true;
         break;
@@ -124,12 +131,15 @@ async function lookupStop(pro) {
     }
   }
 
-  // Log raw appointment/comment data for debugging
-  if (appt.apptId || allComments.length > 0 || result.isAppointment) {
-    console.log(`[APPT] apptInfo:`, JSON.stringify(appt));
-    console.log(`[APPT] comments:`, JSON.stringify(allComments).slice(0, 500));
-    console.log(`[APPT] ref1:${ref1} ref2:${ref2} srvcLevel:${srvcLevel}`);
-  }
+  // Log raw data for debugging where appointment codes appear
+  console.log(`[APPT-DEBUG] pro:${pro} isAppt:${result.isAppointment}`);
+  console.log(`[APPT-DEBUG] apptInfo:`, JSON.stringify(appt));
+  console.log(`[APPT-DEBUG] comments:`, JSON.stringify(allComments).slice(0, 800));
+  console.log(`[APPT-DEBUG] ref1:${stop.reference1||''} ref2:${stop.reference2||''} srvcLevel:${stop.srvcLevel||''} profile:${stop.profile||''}`);
+  console.log(`[APPT-DEBUG] consAttribute:${stop.consAttribute||''} freightTerms:${stop.freightTerms||''} serviceType:${stop.serviceType||''}`);
+  if (stop.customAttributes) console.log(`[APPT-DEBUG] customAttrs:`, JSON.stringify(stop.customAttributes).slice(0, 500));
+  if (stop.stopDetails) console.log(`[APPT-DEBUG] stopDetails:`, JSON.stringify(stop.stopDetails).slice(0, 500));
+  if (stop.privateNotes) console.log(`[APPT-DEBUG] privateNotes:`, JSON.stringify(stop.privateNotes).slice(0, 300));
 
   // ── Flag 2 & 3: Need load info for route-level checks ──
   const loadNbr = result.loadNbr;
