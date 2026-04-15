@@ -648,6 +648,70 @@ function clearSession(){
 }
 
 // ── Camera ─────────────────────────────────────
+// ── Last scanned code (debounce duplicates) ──
+let lastScannedCode = '';
+let lastScanTime = 0;
+let scanCount = 0;
+
+// Check if a barcode looks like a valid Uline PRO (numeric only, 5-10 digits)
+function isValidPRO(code) {
+  if (!code || code.length < 5) return false;
+  // Reject OG order numbers, alpha-heavy codes, and non-numeric strings
+  if (/^OG/i.test(code)) return false;
+  if (/^[A-Z]{2,}/i.test(code)) return false;
+  // Must be all digits
+  return /^\d+$/.test(code);
+}
+
+async function handleScan(code) {
+  // Debounce: skip if same code scanned within 3 seconds
+  const now = Date.now();
+  if (code === lastScannedCode && (now - lastScanTime) < 3000) return;
+  lastScannedCode = code;
+  lastScanTime = now;
+
+  // Skip if already in this session
+  if (scans.find(s => s.pro === code || s.pro === code.padStart(9, '0'))) {
+    toast('Already scanned: ' + code);
+    return;
+  }
+
+  const st = document.getElementById('cam-st');
+  const msg = document.getElementById('cam-msg');
+  scanCount++;
+  st.textContent = '✓ ' + code;
+  document.getElementById('pro-in').value = code;
+  if (navigator.vibrate) navigator.vibrate(100);
+
+  // Auto-lookup in background — don't stop the camera
+  try {
+    const res = await fetch(`${API}/nuvizz-lookup`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pro:code})});
+    const data = await res.json();
+    if (data.error) {
+      msg.textContent = `⚠ ${code}: ${data.message || 'not found'}`;
+      st.textContent = `${scanCount} scanned · last: ${code}`;
+    } else {
+      // Auto-log it
+      const entry = {pro:code, ...data, ts:new Date().toISOString(), time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+      // Use padded PRO if data came back with one
+      if (data.pro) entry.pro = data.pro;
+      if (!scans.find(s => s.pro === entry.pro)) {
+        scans.push(entry);
+        updateStats();
+        // Fire to Firebase in background
+        fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
+      }
+      const flag = data.isForgotten ? ' ⚠ FORGOTTEN' : (data.isAppointment ? ' 🔔 APPT' : '');
+      msg.textContent = `✓ ${data.consignee || code}${flag}`;
+      st.textContent = `${scans.length} logged · scanning...`;
+    }
+  } catch(e) {
+    msg.textContent = `Network error on ${code}`;
+  }
+  // Update the scan badge
+  document.getElementById('scan-ct-badge').textContent = scans.length + ' scanned';
+}
+
 async function camStart(){
   if(camOn)return;
   const msg=document.getElementById('cam-msg');
@@ -657,11 +721,10 @@ async function camStart(){
   const wrap=document.getElementById('cam-wrap');
 
   msg.textContent='Starting camera...';
+  scanCount = 0;
 
-  // Try Quagga2 first (best for 1D barcodes on mobile)
   if(window.Quagga){
     try{
-      // Create a container for Quagga inside the cam-wrap
       let qContainer=document.getElementById('quagga-container');
       if(!qContainer){
         qContainer=document.createElement('div');
@@ -675,64 +738,41 @@ async function camStart(){
       await new Promise((resolve,reject)=>{
         Quagga.init({
           inputStream:{
-            name:'Live',
-            type:'LiveStream',
-            target:qContainer,
-            constraints:{
-              facingMode:'environment',
-              width:{ideal:1280},
-              height:{ideal:720},
-            },
+            name:'Live',type:'LiveStream',target:qContainer,
+            constraints:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},
           },
           decoder:{
-            readers:['code_128_reader','code_39_reader','ean_reader','i2of5_reader','codabar_reader','upc_reader'],
+            readers:['code_128_reader','code_39_reader','i2of5_reader','codabar_reader'],
             multiple:false,
           },
           locate:true,
-          frequency:10,
-        },(err)=>{
-          if(err){reject(err);return;}
-          resolve();
-        });
+          frequency:15,
+        },(err)=>{if(err){reject(err);return;}resolve();});
       });
 
       Quagga.start();
       camOn=true;
       stopBtn.style.display='block';
-      msg.textContent='Point at barcode';
-      st.textContent='Scanning...';
-
-      // Hide the scan frame overlay so you can see the camera
       document.getElementById('cam-ui').style.display='none';
+      msg.textContent='Point at PRO barcode · scanning...';
+      st.textContent='0 scanned';
 
-      // Style the Quagga video to fill the container and be VISIBLE
       const qVid=qContainer.querySelector('video');
-      if(qVid){
-        qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
-      }
-      // Hide Quagga's drawing canvas (green boxes)
-      const qCanvases=qContainer.querySelectorAll('canvas');
-      qCanvases.forEach(c=>c.style.display='none');
+      if(qVid) qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
+      qContainer.querySelectorAll('canvas').forEach(c=>c.style.display='none');
 
       Quagga.onDetected((result)=>{
         if(!camOn)return;
         const code=result.codeResult.code;
-        if(code&&code.length>=5){
-          // Show the code but don't auto-lookup — let user verify
-          document.getElementById('pro-in').value=code;
-          st.textContent='✓ '+code;
-          msg.textContent='Tap LOOK UP or scan again';
-          if(navigator.vibrate)navigator.vibrate(100);
-          camStop(null);
-          // Auto-lookup after brief pause so user can see what was scanned
-          setTimeout(()=>lookup(code), 400);
+        if(isValidPRO(code)){
+          handleScan(code);
         }
+        // Silently ignore non-PRO barcodes (OG numbers, etc.)
       });
 
       return;
     }catch(e){
       console.error('[QUAGGA]',e);
-      // Fall through to native BarcodeDetector
     }
   }
 
@@ -744,29 +784,25 @@ async function camStart(){
     vid.srcObject=stream;vid.style.display='block';
     await vid.play();
     camOn=true;stopBtn.style.display='block';
-    msg.textContent='Point at barcode';st.textContent='Scanning...';
+    document.getElementById('cam-ui').style.display='none';
+    msg.textContent='Point at PRO barcode · scanning...';st.textContent='0 scanned';
 
     if('BarcodeDetector' in window){
-      const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','itf','codabar','upc_a','upc_e']});
+      const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','itf','codabar','upc_a']});
       scanInterval=setInterval(async()=>{
         if(!camOn||vid.readyState<2)return;
         try{
           const barcodes=await detector.detect(vid);
-          if(barcodes.length>0){
-            const code=barcodes[0].rawValue;
-            if(code&&code.length>=4){
-              clearInterval(scanInterval);
-              document.getElementById('pro-in').value=code;
-              st.textContent='✓ '+code;msg.textContent='Barcode captured!';
-              if(navigator.vibrate)navigator.vibrate(100);
-              camStop(null);lookup(code);
+          for(const bc of barcodes){
+            if(isValidPRO(bc.rawValue)){
+              handleScan(bc.rawValue);
+              break;
             }
           }
         }catch(e){}
       },250);
     }else{
-      st.textContent='Manual entry ↓';
-      msg.textContent='Barcode scanner not supported — type PRO below';
+      msg.textContent='No scanner — type PRO below';
     }
   }catch(e){
     msg.textContent='Camera blocked — use manual entry';st.textContent='';camOn=false;
@@ -776,13 +812,10 @@ async function camStart(){
 function camStop(e){
   if(e)e.stopPropagation();
   if(scanInterval){clearInterval(scanInterval);scanInterval=null;}
-  // Stop Quagga
   if(window.Quagga){try{Quagga.stop();}catch(_){}}
   const qc=document.getElementById('quagga-container');
   if(qc)qc.style.display='none';
-  // Restore scan frame overlay
   document.getElementById('cam-ui').style.display='';
-  // Stop native camera
   const vid=document.getElementById('cam-vid');
   if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
   vid.style.display='none';
@@ -790,6 +823,11 @@ function camStop(e){
   document.getElementById('cam-msg').textContent='Tap to activate camera';
   document.getElementById('cam-st').textContent='';
   camOn=false;
+  // Show last result if any scans happened
+  if(scans.length > 0){
+    const last = scans[scans.length - 1];
+    showResult(last.pro, last);
+  }
 }
 
 // ── Keyboard ───────────────────────────────────
