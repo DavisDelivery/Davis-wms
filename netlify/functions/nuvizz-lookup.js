@@ -26,13 +26,39 @@ function basicHeader() {
   return { 'Authorization': `Basic ${Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64')}` };
 }
 
-// ── Stop Lookup ──────────────────────────────────────
+// ── Stop Lookup (with auto zero-padding for Uline labels) ──
 async function lookupStop(pro) {
+  // Try the PRO as-is first
+  let res = await tryStopLookup(pro);
+  
+  // If not found and PRO is numeric, try with leading zeros
+  // Uline labels show "7105230" but NuVizz needs "007105230"
+  if (res.notFound && /^\d+$/.test(pro)) {
+    // Try padding to 9 digits (00 + 7 digit PRO)
+    const padded9 = pro.padStart(9, '0');
+    if (padded9 !== pro) {
+      console.log(`[PAD] Trying ${padded9}`);
+      const res2 = await tryStopLookup(padded9);
+      if (!res2.notFound) return res2;
+    }
+    // Try padding to 10 digits
+    const padded10 = pro.padStart(10, '0');
+    if (padded10 !== padded9) {
+      console.log(`[PAD] Trying ${padded10}`);
+      const res3 = await tryStopLookup(padded10);
+      if (!res3.notFound) return res3;
+    }
+  }
+  
+  return res;
+}
+
+async function tryStopLookup(pro) {
   const url = `${BASE_URL}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
   const res = await rq(url, { headers: basicHeader() });
   console.log(`[STOP] ${url} → ${res.status}`);
 
-  if (res.status === 404 || res.status === 409) return { error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, source:'nuvizz_live' };
+  if (res.status === 404 || res.status === 409) return { notFound:true, error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, source:'nuvizz_live' };
   if (res.status === 401 || res.status === 403) return { error:'auth_failed', pro, message:`Auth rejected (HTTP ${res.status})`, source:'nuvizz_live' };
   if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), source:'nuvizz_live' };
 
