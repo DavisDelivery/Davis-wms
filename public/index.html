@@ -164,15 +164,19 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .flag-alert{border-radius:8px;padding:11px 12px;margin-top:10px;display:flex;align-items:flex-start;gap:10px}
 .flag-alert.high{background:#fdf0f0;border:1px solid #f5c0c0}
 .flag-alert.medium{background:#fffbee;border:1px solid #ffd97a}
+.flag-alert.appt{background:#f3eefa;border:1px solid #c9b3e8}
 .flag-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;flex-shrink:0}
 .flag-icon.high{background:var(--danger)}
 .flag-icon.medium{background:var(--accent)}
+.flag-icon.appt{background:var(--purple)}
 .flag-text{font-size:13px;line-height:1.4}
 .flag-text strong{display:block;font-size:14px;font-weight:700;margin-bottom:2px}
 .flag-alert.high .flag-text{color:#7a1f1f}
 .flag-alert.high .flag-text strong{color:#5a0f0f}
 .flag-alert.medium .flag-text{color:#7a5a00}
 .flag-alert.medium .flag-text strong{color:#5a4000}
+.flag-alert.appt .flag-text{color:#4a3270}
+.flag-alert.appt .flag-text strong{color:#352456}
 .flag-stops{font-size:11px;color:#995050;margin-top:4px}
 .forgotten-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:#d94040;color:#fff;margin-top:8px;animation:pulse 1.5s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
@@ -410,16 +414,17 @@ function showResult(pro,data){
       'wrong_day': '📅 Wrong Day',
       'partial_delivery': '📦 Partial Delivery',
       'route_active': '🚚 Route Already Active',
+      'appointment': '🔔 Appointment Delivery',
     };
     let html = '';
     if (isForgotten) {
       html += '<div class="forgotten-badge">⚠ FORGOTTEN FREIGHT</div>';
     }
     flags.forEach(f => {
-      const sev = f.severity || 'high';
+      const sev = f.type === 'appointment' ? 'appt' : (f.severity || 'high');
       const title = FLAG_TITLES[f.type] || f.type;
       html += `<div class="flag-alert ${sev}">
-        <div class="flag-icon ${sev}">!</div>
+        <div class="flag-icon ${sev}">${f.type === 'appointment' ? '🔔' : '!'}</div>
         <div class="flag-text">
           <strong>${title}</strong>
           ${f.message}

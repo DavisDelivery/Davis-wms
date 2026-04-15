@@ -55,6 +55,82 @@ async function lookupStop(pro) {
     }
   }
 
+  // ── Flag 1b: Appointment delivery ──
+  // Check structured apptInfo
+  const appt = stop.apptInfo || {};
+  if (appt.apptId || appt.apptStatus || appt.apptDate) {
+    const apptDate = appt.apptDate || '';
+    const apptTime = [appt.startTime, appt.endTime].filter(Boolean).join(' - ');
+    const apptStatus = appt.apptStatus || '';
+    result.flags = result.flags || [];
+    result.flags.push({
+      type: 'appointment',
+      severity: 'high',
+      message: `Appointment delivery${apptDate ? ' on ' + formatDate(apptDate) : ''}${apptTime ? ' (' + apptTime + ')' : ''}${apptStatus ? ' — ' + apptStatus : ''}`,
+      apptDate, apptTime, apptStatus,
+    });
+    result.isAppointment = true;
+    result.apptDate = apptDate;
+    result.apptTime = apptTime;
+    result.apptStatus = apptStatus;
+  }
+
+  // Check comments for NTFY/APPT/appointment codes
+  const comments = stop.comments || {};
+  const commentList = comments.comment || comments.comments || [];
+  const allComments = Array.isArray(commentList) ? commentList : [commentList];
+  let apptComment = null;
+  for (const c of allComments) {
+    if (!c) continue;
+    const desc = (c.commentDescription || c.description || '').toUpperCase();
+    const cType = (c.commentType || c.cmtType || '').toUpperCase();
+    // Look for NTFY, APPT, appointment, notification codes
+    if (/NTFY|APPT|APPOINTMENT|NOTIFY|DEL\.?\s*APPT|DELIVERY\s*APP/i.test(desc) ||
+        /NTFY|APPT/i.test(cType)) {
+      apptComment = c.commentDescription || c.description || cType;
+      break;
+    }
+  }
+  if (apptComment && !result.isAppointment) {
+    result.flags = result.flags || [];
+    result.flags.push({
+      type: 'appointment',
+      severity: 'high',
+      message: `Appointment delivery — "${apptComment}"`,
+    });
+    result.isAppointment = true;
+    result.apptNote = apptComment;
+  }
+
+  // Also check customAttributes and reference fields for NTFY/APPT codes
+  const custAttrs = stop.customAttributes || {};
+  const ref1 = (stop.reference1 || '').toUpperCase();
+  const ref2 = (stop.reference2 || '').toUpperCase();
+  const srvcLevel = (stop.srvcLevel || '').toUpperCase();
+  const profile = (stop.profile || '').toUpperCase();
+  const allFields = [ref1, ref2, srvcLevel, profile, JSON.stringify(custAttrs).toUpperCase()];
+  if (!result.isAppointment) {
+    for (const f of allFields) {
+      if (/NTFY|APPT|APPOINTMENT/.test(f)) {
+        result.flags = result.flags || [];
+        result.flags.push({
+          type: 'appointment',
+          severity: 'high',
+          message: `Appointment delivery detected in order details`,
+        });
+        result.isAppointment = true;
+        break;
+      }
+    }
+  }
+
+  // Log raw appointment/comment data for debugging
+  if (appt.apptId || allComments.length > 0 || result.isAppointment) {
+    console.log(`[APPT] apptInfo:`, JSON.stringify(appt));
+    console.log(`[APPT] comments:`, JSON.stringify(allComments).slice(0, 500));
+    console.log(`[APPT] ref1:${ref1} ref2:${ref2} srvcLevel:${srvcLevel}`);
+  }
+
   // ── Flag 2 & 3: Need load info for route-level checks ──
   const loadNbr = result.loadNbr;
   if (loadNbr && loadNbr !== '-') {
