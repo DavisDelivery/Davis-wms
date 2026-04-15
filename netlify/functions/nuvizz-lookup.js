@@ -40,6 +40,28 @@ async function lookupStop(pro) {
 
   const result = parseStop(data, pro);
 
+  // TEMP: include raw stop data for debugging where NTFY code lives
+  const rawView = data.Stop || data.stop || data;
+  const rawStop = rawView.stop || {};
+  result._debug = {
+    comments: rawStop.comments,
+    customAttributes: rawStop.customAttributes,
+    stopAccessorials: rawStop.stopAccessorials,
+    stopDetails: rawStop.stopDetails ? (Array.isArray(rawStop.stopDetails) ? rawStop.stopDetails.slice(0,3) : rawStop.stopDetails) : null,
+    apptInfo: rawStop.apptInfo,
+    privateNotes: rawStop.privateNotes,
+    invoiceRef: rawStop.invoiceRef,
+    reference1: rawStop.reference1,
+    reference2: rawStop.reference2,
+    srvcLevel: rawStop.srvcLevel,
+    profile: rawStop.profile,
+    consAttribute: rawStop.consAttribute,
+    freightTerms: rawStop.freightTerms,
+    serviceType: rawStop.serviceType,
+    scheduleFrom: (rawStop.to || {}).schedule,
+    scheduleTo: ((rawView.stopExecutionInfo || {}).to || {}),
+  };
+
   // ── Flag 1: Wrong day (scheduled date ≠ today) ──
   const view = data.Stop || data.stop || data;
   const stop = (view.stop || {});
