@@ -27,16 +27,16 @@ function basicHeader() {
 }
 
 // ── Stop Lookup (always prepend 00 to PROs for Uline/NuVizz) ──
-async function lookupStop(pro) {
+async function lookupStop(pro, quick) {
   // Uline PROs need 00 prefix for NuVizz
   let paddedPro = pro;
   if (/^\d+$/.test(pro) && !pro.startsWith('00')) {
     paddedPro = '00' + pro;
   }
-  return await tryStopLookup(paddedPro);
+  return await tryStopLookup(paddedPro, quick);
 }
 
-async function tryStopLookup(pro) {
+async function tryStopLookup(pro, quick) {
   const url = `${BASE_URL}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
   const res = await rq(url, { headers: basicHeader() });
   console.log(`[STOP] ${url} → ${res.status}`);
@@ -108,10 +108,9 @@ async function tryStopLookup(pro) {
   }
 
   // ── Flag 2 & 3: Route-level checks (load info) ──
-  // Return the stop result immediately, then enrich with load data
-  // This makes the initial response fast — flags get added if load data comes back
+  // Skip in quick mode (scanner) for instant response
   const loadNbr = result.loadNbr;
-  if (loadNbr && loadNbr !== '-') {
+  if (!quick && loadNbr && loadNbr !== '-') {
     try {
       const loadData = await getLoadInfo(loadNbr);
       if (loadData && !loadData.error) {
@@ -301,6 +300,7 @@ exports.handler = async (event) => {
   if (event.httpMethod!=='POST') return {statusCode:405,headers:H,body:'{"error":"Method not allowed"}'};
   const body=JSON.parse(event.body||'{}');
   const pro=(body.pro||'').trim().toUpperCase();
+  const quick = body.quick || false;
   if (!pro) return {statusCode:400,headers:H,body:'{"error":"Missing PRO"}'};
 
   if (!USERNAME||!PASSWORD) {
@@ -308,6 +308,6 @@ exports.handler = async (event) => {
     return {statusCode:200,headers:H,body:JSON.stringify(r)};
   }
 
-  try { return {statusCode:200,headers:H,body:JSON.stringify(await lookupStop(pro))}; }
+  try { return {statusCode:200,headers:H,body:JSON.stringify(await lookupStop(pro, quick))}; }
   catch(e){ console.error(e); return {statusCode:200,headers:H,body:JSON.stringify({error:'server_error',message:e.message,pro,source:'nuvizz_live'})}; }
 };
