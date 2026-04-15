@@ -72,6 +72,8 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .scan-last .scan-code{color:var(--accent);font-size:14px;letter-spacing:1px}
 .scan-last .scan-result{color:var(--ok);font-size:11px}
 .scan-last .scan-error{color:var(--danger);font-size:11px}
+.scan-flash{position:absolute;inset:0;background:rgba(45,158,95,.35);z-index:10;pointer-events:none;animation:flashGreen .4s ease-out forwards}
+@keyframes flashGreen{0%{opacity:1}100%{opacity:0}}
 
 /* ── INPUTS ── */
 .row{display:flex;gap:8px}
@@ -669,18 +671,13 @@ let lastScannedCode = '';
 let lastScanTime = 0;
 let scanCount = 0;
 
-// Check if a barcode is a valid Uline PRO number
-// Uline PROs are 7 digits (e.g., 7105230). The label also has longer OG numbers,
-// order numbers, DO numbers, PO numbers — we only want the 7-digit PRO.
+// Uline PROs are exactly 7 digits (e.g., 7105230, 7104910)
+// Reject everything else: route codes (4-5 digits), OG numbers, order numbers, etc.
 function isValidPRO(code) {
   if (!code) return false;
-  // Must be all digits
   if (!/^\d+$/.test(code)) return false;
-  // Uline PROs are 6-8 digits. Reject anything shorter or longer.
-  // This filters out: OG numbers (13 digits), DO numbers (13 digits), 
-  // ORD numbers (8+ digits), PO numbers (9 digits), short partials
-  if (code.length < 6 || code.length > 8) return false;
-  return true;
+  // EXACTLY 7 digits
+  return code.length === 7;
 }
 
 async function handleScan(code) {
@@ -697,6 +694,11 @@ async function handleScan(code) {
   scanCount++;
   document.getElementById('pro-in').value = code;
   if (navigator.vibrate) navigator.vibrate(100);
+  // Green flash on the camera view
+  const flash = document.createElement('div');
+  flash.className = 'scan-flash';
+  document.getElementById('cam-wrap').appendChild(flash);
+  setTimeout(() => flash.remove(), 450);
 
   // Show what was scanned immediately in the overlay
   const lastEl = document.getElementById('scan-last');

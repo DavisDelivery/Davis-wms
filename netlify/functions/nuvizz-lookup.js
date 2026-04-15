@@ -65,27 +65,8 @@ async function tryStopLookup(pro) {
   }
 
   // ── Flag 1b: Appointment delivery ──
-  // Check structured apptInfo
-  const appt = stop.apptInfo || {};
-  if (appt.apptId || appt.apptStatus || appt.apptDate) {
-    const apptDate = appt.apptDate || '';
-    const apptTime = [appt.startTime, appt.endTime].filter(Boolean).join(' - ');
-    const apptStatus = appt.apptStatus || '';
-    result.flags = result.flags || [];
-    result.flags.push({
-      type: 'appointment',
-      severity: 'high',
-      message: `Appointment delivery${apptDate ? ' on ' + formatDate(apptDate) : ''}${apptTime ? ' (' + apptTime + ')' : ''}${apptStatus ? ' — ' + apptStatus : ''}`,
-      apptDate, apptTime, apptStatus,
-    });
-    result.isAppointment = true;
-    result.apptDate = apptDate;
-    result.apptTime = apptTime;
-    result.apptStatus = apptStatus;
-  }
-
-  // Check comments for the exact Uline appointment code:
-  // "SPL-INSTR-TEXT: NTFY OF DELIVERY-APPT REQD"
+  // ONLY flag on the exact Uline comment: "NTFY OF DELIVERY-APPT REQD"
+  // NuVizz apptInfo (READY_TO_SCHEDULE etc.) is their internal system — ignore it.
   const comments = stop.comments || {};
   const commentList = comments.comment || comments.comments || [];
   const allComments = Array.isArray(commentList) ? commentList : [commentList];
@@ -93,13 +74,12 @@ async function tryStopLookup(pro) {
   for (const c of allComments) {
     if (!c) continue;
     const desc = (c.commentDescription || c.description || '').toUpperCase();
-    // Only match the specific Uline appointment code
-    if (desc.includes('NTFY OF DELIVERY-APPT REQD') || desc.includes('NTFY OF DELIVERY - APPT REQD')) {
+    if (desc.includes('NTFY OF DELIVERY-APPT REQD')) {
       apptComment = c.commentDescription || c.description;
       break;
     }
   }
-  if (apptComment && !result.isAppointment) {
+  if (apptComment) {
     result.flags = result.flags || [];
     result.flags.push({
       type: 'appointment',
