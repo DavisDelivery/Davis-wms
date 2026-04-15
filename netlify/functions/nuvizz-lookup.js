@@ -26,16 +26,13 @@ function basicHeader() {
   return { 'Authorization': `Basic ${Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64')}` };
 }
 
-// ── Stop Lookup (auto zero-pad for Uline labels) ──
+// ── Stop Lookup (always prepend 00 to PROs for Uline/NuVizz) ──
 async function lookupStop(pro) {
-  // Uline labels show 7-digit PROs but NuVizz needs 9 digits with 00 prefix
-  // Always pad numeric PROs to 9 digits
+  // Uline PROs need 00 prefix for NuVizz
   let paddedPro = pro;
-  if (/^\d+$/.test(pro) && pro.length < 9) {
-    paddedPro = pro.padStart(9, '0');
-    console.log(`[PAD] ${pro} → ${paddedPro}`);
+  if (/^\d+$/.test(pro) && !pro.startsWith('00')) {
+    paddedPro = '00' + pro;
   }
-  
   return await tryStopLookup(paddedPro);
 }
 
