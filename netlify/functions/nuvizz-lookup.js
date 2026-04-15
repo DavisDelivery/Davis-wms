@@ -230,9 +230,22 @@ async function lookupStop(pro) {
     }
   }
 
-  // Set overall forgotten flag
-  if (result.flags && result.flags.length > 0) {
-    result.isForgotten = true;
+  // Set overall forgotten flag — but NOT if it's an appointment delivery
+  // Appointment freight is SUPPOSED to be in the warehouse until its delivery date
+  if (result.isAppointment) {
+    // Remove forgotten-type flags — keep only the appointment flag
+    result.flags = (result.flags || []).filter(f => f.type === 'appointment');
+    result.isForgotten = false;
+  } else {
+    // Only forgotten if there are non-appointment flags
+    const forgottenFlags = (result.flags || []).filter(f => f.type !== 'appointment');
+    result.isForgotten = forgottenFlags.length > 0;
+  }
+
+  // Add requested delivery date (from schedule timeFrom)
+  if (schedule.timeFrom) {
+    result.requestedDate = schedule.timeFrom.split('T')[0];
+    result.requestedDateFormatted = formatDate(result.requestedDate);
   }
 
   return result;

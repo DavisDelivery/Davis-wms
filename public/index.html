@@ -247,6 +247,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
           <div class="rf full"><label>Address</label><div class="val" id="r-addr"></div></div>
           <div class="rf"><label>Weight</label><div class="val" id="r-weight"></div></div>
           <div class="rf"><label>Pallets / Ctns</label><div class="val" id="r-pcs"></div></div>
+          <div class="rf"><label>Requested Date</label><div class="val" id="r-reqdate"></div></div>
           <div class="rf"><label>Delivered At</label><div class="val" id="r-sched"></div></div>
           <div class="rf"><label>Seal #</label><div class="val" id="r-seal"></div></div>
         </div>
@@ -398,6 +399,20 @@ function showResult(pro,data){
   document.getElementById('r-addr').textContent=data.fullAddress||data.address||'—';
   document.getElementById('r-weight').textContent=data.weight||'—';
   document.getElementById('r-pcs').textContent=[data.pallets,data.cartons].filter(v=>v&&v!=='-'&&v!=='—').join(' / ')||'—';
+  const reqDateEl=document.getElementById('r-reqdate');
+  if (data.requestedDateFormatted) {
+    reqDateEl.textContent=data.requestedDateFormatted;
+    // Highlight if not today
+    const today=new Date().toISOString().split('T')[0];
+    if (data.requestedDate && data.requestedDate !== today) {
+      reqDateEl.style.color='var(--purple)';
+      reqDateEl.style.fontWeight='700';
+    } else {
+      reqDateEl.style.color='';reqDateEl.style.fontWeight='';
+    }
+  } else {
+    reqDateEl.textContent='—';reqDateEl.style.color='';reqDateEl.style.fontWeight='';
+  }
   document.getElementById('r-sched').textContent=data.deliveredAt||'—';
   document.getElementById('r-seal').textContent=data.sealNbr||'—';
 
