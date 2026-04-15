@@ -159,6 +159,23 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 @keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a2333;color:#fff;padding:10px 20px;border-radius:25px;font-size:13px;font-weight:600;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none}
 .toast.show{opacity:1}
+
+/* ── FLAG ALERTS ── */
+.flag-alert{border-radius:8px;padding:11px 12px;margin-top:10px;display:flex;align-items:flex-start;gap:10px}
+.flag-alert.high{background:#fdf0f0;border:1px solid #f5c0c0}
+.flag-alert.medium{background:#fffbee;border:1px solid #ffd97a}
+.flag-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;flex-shrink:0}
+.flag-icon.high{background:var(--danger)}
+.flag-icon.medium{background:var(--accent)}
+.flag-text{font-size:13px;line-height:1.4}
+.flag-text strong{display:block;font-size:14px;font-weight:700;margin-bottom:2px}
+.flag-alert.high .flag-text{color:#7a1f1f}
+.flag-alert.high .flag-text strong{color:#5a0f0f}
+.flag-alert.medium .flag-text{color:#7a5a00}
+.flag-alert.medium .flag-text strong{color:#5a4000}
+.flag-stops{font-size:11px;color:#995050;margin-top:4px}
+.forgotten-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:#d94040;color:#fff;margin-top:8px;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 </style>
 </head>
 <body>
@@ -230,13 +247,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
           <div class="rf"><label>Seal #</label><div class="val" id="r-seal"></div></div>
         </div>
         <div id="r-src"></div>
-        <div class="warehouse-alert" id="wh-alert">
-          <div class="wa-icon">!</div>
-          <div class="wa-text">
-            <strong>Still in Warehouse</strong>
-            Assigned to <span id="wh-driver"></span> on <span id="wh-route"></span> — not yet loaded or dispatched.
-          </div>
-        </div>
+        <div id="flags-area"></div>
         <div class="btn-actions">
           <button class="btn-act primary" id="log-btn" onclick="logScan()">Log Scan</button>
           <button class="btn-act secondary" onclick="clearResult()">Clear</button>
@@ -359,12 +370,21 @@ function showResult(pro,data){
   const card=document.getElementById('result');
   card.classList.add('show');
 
+  // If forgotten, override status display
+  const isForgotten = data.isForgotten;
   const st=data.status||'unknown';
   const map=STATUS[st]||STATUS.unknown;
 
-  document.getElementById('res-hdr').className='res-hdr '+map.cls;
-  document.getElementById('res-st').innerHTML=`<div class="sdot ${map.cls}"></div>${map.label}`;
-  document.getElementById('res-st').className='res-status '+map.cls;
+  // If forgotten, force red header regardless of NuVizz status
+  if (isForgotten) {
+    document.getElementById('res-hdr').className='res-hdr warehouse';
+    document.getElementById('res-st').innerHTML='<div class="sdot warehouse"></div>⚠ FORGOTTEN FREIGHT';
+    document.getElementById('res-st').className='res-status warehouse';
+  } else {
+    document.getElementById('res-hdr').className='res-hdr '+map.cls;
+    document.getElementById('res-st').innerHTML=`<div class="sdot ${map.cls}"></div>${map.label}`;
+    document.getElementById('res-st').className='res-status '+map.cls;
+  }
   document.getElementById('res-pro').textContent='PRO# '+pro;
 
   document.getElementById('r-driver').textContent=data.driver||'—';
@@ -373,7 +393,7 @@ function showResult(pro,data){
   document.getElementById('r-stop').textContent=data.stop||'—';
   document.getElementById('r-addr').textContent=data.fullAddress||data.address||'—';
   document.getElementById('r-weight').textContent=data.weight||'—';
-  document.getElementById('r-pcs').textContent=[data.pallets,data.cartons].filter(v=>v&&v!=='—').join(' / ')||'—';
+  document.getElementById('r-pcs').textContent=[data.pallets,data.cartons].filter(v=>v&&v!=='-'&&v!=='—').join(' / ')||'—';
   document.getElementById('r-sched').textContent=data.deliveredAt||'—';
   document.getElementById('r-seal').textContent=data.sealNbr||'—';
 
@@ -382,21 +402,44 @@ function showResult(pro,data){
   const isLive=data.source==='nuvizz_live';
   srcEl.innerHTML=`<div class="src-badge ${isLive?'src-live':'src-mock'}"><div class="src-dot"></div>${isLive?'Live NuVizz':'Mock Data'}</div>`;
 
-  // Warehouse alert
-  const alert=document.getElementById('wh-alert');
-  if(st==='warehouse'||st==='planned'){
-    alert.style.display='flex';
-    document.getElementById('wh-driver').textContent=data.driver||'assigned driver';
-    document.getElementById('wh-route').textContent=data.route||'assigned route';
-  }else{
-    alert.style.display='none';
+  // Flags area
+  const flagsEl=document.getElementById('flags-area');
+  const flags = data.flags || [];
+  if (flags.length > 0) {
+    const FLAG_TITLES = {
+      'wrong_day': '📅 Wrong Day',
+      'partial_delivery': '📦 Partial Delivery',
+      'route_active': '🚚 Route Already Active',
+    };
+    let html = '';
+    if (isForgotten) {
+      html += '<div class="forgotten-badge">⚠ FORGOTTEN FREIGHT</div>';
+    }
+    flags.forEach(f => {
+      const sev = f.severity || 'high';
+      const title = FLAG_TITLES[f.type] || f.type;
+      html += `<div class="flag-alert ${sev}">
+        <div class="flag-icon ${sev}">!</div>
+        <div class="flag-text">
+          <strong>${title}</strong>
+          ${f.message}
+          ${f.deliveredStops ? '<div class="flag-stops">Delivered: '+f.deliveredStops.map(s=>s.consignee||s.stopNbr).join(', ')+'</div>' : ''}
+        </div>
+      </div>`;
+    });
+    flagsEl.innerHTML = html;
+  } else {
+    flagsEl.innerHTML = '';
   }
+
+  // Override status for forgotten items in the data we store
+  const effectiveStatus = isForgotten ? 'warehouse' : st;
 
   // Reset log btn
   const lb=document.getElementById('log-btn');
   lb.textContent='Log Scan';lb.className='btn-act primary';lb.disabled=false;
 
-  current={pro,...data,ts:new Date().toISOString(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+  current={pro,...data,status:effectiveStatus,ts:new Date().toISOString(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 }
 
 function clearResult(){

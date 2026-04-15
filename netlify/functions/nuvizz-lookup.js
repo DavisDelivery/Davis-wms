@@ -4,18 +4,7 @@ const { URL } = require('url');
 const COMPANY = process.env.NUVIZZ_COMPANY || 'davis';
 const USERNAME = process.env.NUVIZZ_USER;
 const PASSWORD = process.env.NUVIZZ_PASS;
-const BASE_URL = process.env.NUVIZZ_BASE_URL;
-
-const URL_CANDIDATES = [
-  'https://portal.nuvizz.com/deliverit/openapi/v7',
-  'https://portal.nuvizz.com/api-gateway/webservices/nudeliverit/v7',
-  'https://portal.nuvizz.com/api-gateway/webservices/nudeliverit/v5',
-  'https://portal.nuvizz.com/deliverit/openapi/v5',
-];
-
-let workingBase = '';
-let cachedToken = '';
-let tokenExpiry = 0;
+const BASE_URL = process.env.NUVIZZ_BASE_URL || 'https://portal.nuvizz.com/deliverit/openapi/v7';
 
 function rq(url, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -24,7 +13,7 @@ function rq(url, opts = {}) {
       hostname: p.hostname, path: p.pathname + p.search,
       method: opts.method || 'GET',
       headers: { 'Accept':'application/json','Content-Type':'application/json', ...opts.headers },
-      timeout: 12000,
+      timeout: 15000,
     }, res => { let b=''; res.on('data',c=>b+=c); res.on('end',()=>resolve({status:res.statusCode,body:b})); });
     r.on('error', reject);
     r.on('timeout', () => { r.destroy(); reject(new Error('timeout')); });
@@ -33,133 +22,211 @@ function rq(url, opts = {}) {
   });
 }
 
-async function getToken() {
-  if (cachedToken && Date.now() < tokenExpiry && workingBase) return { token: cachedToken, base: workingBase };
-
-  const basic = Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64');
-  const urls = BASE_URL ? [BASE_URL] : URL_CANDIDATES;
-  const tried = [];
-
-  for (const base of urls) {
-    const url = `${base}/auth/token/${encodeURIComponent(COMPANY)}`;
-    console.log(`[AUTH] ${url}`);
-    try {
-      const res = await rq(url, { headers: { 'Authorization': `Basic ${basic}` } });
-      tried.push({ url, status: res.status, body: res.body.slice(0, 300) });
-      console.log(`[AUTH] ${res.status} ${res.body.slice(0, 200)}`);
-
-      if (res.status === 401 || res.status === 403) {
-        return { error: `Bad credentials (HTTP ${res.status})`, tried };
-      }
-      if (res.status === 200) {
-        let data; try { data = JSON.parse(res.body); } catch(e) { continue; }
-        if (data.authToken) {
-          workingBase = base; cachedToken = data.authToken;
-          tokenExpiry = data.expiresAt ? (Number(data.expiresAt)*1000)-300000 : Date.now()+3300000;
-          return { token: cachedToken, base: workingBase };
-        }
-        if (data.reasons) return { error: 'Auth rejected', reasons: data.reasons, tried };
-      }
-    } catch(e) { tried.push({ url, status: 0, error: e.message }); }
-  }
-  return { error: 'No working API URL found', tried };
+function basicHeader() {
+  return { 'Authorization': `Basic ${Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64')}` };
 }
 
+// ── Stop Lookup ──────────────────────────────────────
 async function lookupStop(pro) {
-  const auth = await getToken();
-  if (auth.error) return { error:'auth_failed', message:auth.error, tried:auth.tried, reasons:auth.reasons, source:'nuvizz_live' };
+  const url = `${BASE_URL}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
+  const res = await rq(url, { headers: basicHeader() });
+  console.log(`[STOP] ${url} → ${res.status}`);
 
-  const basic = Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64');
-  const url = `${auth.base}/stop/info/${encodeURIComponent(pro)}/${encodeURIComponent(COMPANY)}`;
-  console.log(`[LOOKUP] ${url}`);
-  const attempts = [];
-
-  // Attempt 1: Basic Auth directly (OpenAPI spec lists BasicAuthentication as primary security)
-  let res = await rq(url, { headers: { 'Authorization': `Basic ${basic}` } });
-  attempts.push({ method: 'Basic', status: res.status, body: res.body.slice(0, 200) });
-  console.log(`[LOOKUP-Basic] ${res.status} ${res.body.slice(0,300)}`);
-
-  // Attempt 2: Bearer token
-  if (res.status === 401 || res.status === 403) {
-    res = await rq(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
-    attempts.push({ method: 'Bearer', status: res.status, body: res.body.slice(0, 200) });
-    console.log(`[LOOKUP-Bearer] ${res.status} ${res.body.slice(0,300)}`);
-  }
-
-  // Attempt 3: authToken custom header
-  if (res.status === 401 || res.status === 403) {
-    res = await rq(url, { headers: { 'authToken': auth.token, 'Authorization': `Basic ${basic}` } });
-    attempts.push({ method: 'authToken+Basic', status: res.status, body: res.body.slice(0, 200) });
-    console.log(`[LOOKUP-combo] ${res.status} ${res.body.slice(0,300)}`);
-  }
-
-  if (res.status === 404 || res.status === 409) return { error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, apiUrl:url, detail:res.body.slice(0,300), source:'nuvizz_live' };
-  if (res.status === 401 || res.status === 403) return { error:'lookup_auth_failed', pro, httpStatus:res.status, message:`All auth methods rejected (HTTP ${res.status})`, apiUrl:url, attempts, source:'nuvizz_live' };
-  if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), apiUrl:url, attempts, source:'nuvizz_live' };
+  if (res.status === 404 || res.status === 409) return { error:'not_found', pro, message:`Stop not found (HTTP ${res.status})`, source:'nuvizz_live' };
+  if (res.status === 401 || res.status === 403) return { error:'auth_failed', pro, message:`Auth rejected (HTTP ${res.status})`, source:'nuvizz_live' };
+  if (res.status !== 200) return { error:'api_error', pro, httpStatus:res.status, detail:res.body.slice(0,500), source:'nuvizz_live' };
 
   let data; try { data = JSON.parse(res.body); } catch(e) { return { error:'parse_error', detail:res.body.slice(0,500), source:'nuvizz_live' }; }
-  return parse(data, pro);
+
+  const result = parseStop(data, pro);
+
+  // ── Flag 1: Wrong day (scheduled date ≠ today) ──
+  const view = data.Stop || data.stop || data;
+  const stop = (view.stop || {});
+  const toInfo = stop.to || {};
+  const schedule = toInfo.schedule || {};
+  if (schedule.timeFrom) {
+    const schedDate = schedule.timeFrom.split('T')[0]; // "2026-04-14"
+    const today = new Date().toISOString().split('T')[0];
+    if (schedDate && schedDate !== today) {
+      result.flags = result.flags || [];
+      result.flags.push({ type: 'wrong_day', severity: 'high', message: `Scheduled for ${formatDate(schedDate)}, not today`, scheduledDate: schedDate, today });
+      result.scheduledDate = schedDate;
+    }
+  }
+
+  // ── Flag 2 & 3: Need load info for route-level checks ──
+  const loadNbr = result.loadNbr;
+  if (loadNbr && loadNbr !== '-') {
+    try {
+      const loadData = await getLoadInfo(loadNbr);
+      if (loadData && !loadData.error) {
+        const stops = loadData.stops || [];
+        const thisStopNbr = result.stopNbr || pro;
+
+        // Flag 2: Check if any part of this stop has been delivered (multipiece)
+        // If the stop itself shows status < 90 but execution has partial completion
+        const exec = ((data.Stop || data.stop || data).stopExecutionInfo || {});
+        const xTo = exec.to || {};
+        if (result.status !== 'delivered' && (xTo.confirmedDTTM || xTo.arrivalDTTM || xTo.departureDTTM)) {
+          result.flags = result.flags || [];
+          result.flags.push({ type: 'partial_delivery', severity: 'high', message: 'Partial delivery detected — driver visited this stop but freight still here' });
+        }
+
+        // Flag 3: Check if ANY other stop on this route has been delivered
+        const deliveredStops = [];
+        for (const ls of stops) {
+          const lsStop = ls.stop || {};
+          const lsExec = ls.stopExecutionInfo || {};
+          const lsStopNbr = lsStop.stopNbr || '';
+          if (lsStopNbr === thisStopNbr) continue; // skip self
+          
+          const lsStatus = lsExec.stopStatus || '';
+          // 90=Completed, 91=Manually Completed, 80=Closed
+          if (lsStatus === '90' || lsStatus === '91' || lsStatus === '80') {
+            const lsAddr = ((lsStop.to || {}).address || {});
+            deliveredStops.push({
+              stopNbr: lsStopNbr,
+              consignee: lsAddr.name || lsStopNbr,
+              status: lsStatus,
+            });
+          }
+          // Also check if stop has actual arrival/departure timestamps
+          const lsTo = lsExec.to || {};
+          if (!deliveredStops.find(d => d.stopNbr === lsStopNbr) && (lsTo.confirmedDTTM || lsTo.departureDTTM)) {
+            deliveredStops.push({
+              stopNbr: lsStopNbr,
+              consignee: ((lsStop.to || {}).address || {}).name || lsStopNbr,
+              status: lsStatus,
+              note: 'has delivery timestamps',
+            });
+          }
+        }
+
+        if (deliveredStops.length > 0 && result.status !== 'delivered') {
+          result.flags = result.flags || [];
+          result.flags.push({
+            type: 'route_active',
+            severity: 'high',
+            message: `${deliveredStops.length} other stop(s) on this route already delivered — this freight is forgotten`,
+            deliveredStops: deliveredStops.slice(0, 5), // limit to 5 for payload size
+          });
+        }
+
+        result.routeStopCount = stops.length;
+        result.routeDeliveredCount = deliveredStops.length;
+      }
+    } catch (e) {
+      console.log(`[LOAD] Error fetching load ${loadNbr}: ${e.message}`);
+      // Non-fatal — still return the stop data
+    }
+  }
+
+  // Set overall forgotten flag
+  if (result.flags && result.flags.length > 0) {
+    result.isForgotten = true;
+  }
+
+  return result;
 }
 
-function parse(data, pro) {
+// ── Load Info ────────────────────────────────────────
+async function getLoadInfo(loadNbr) {
+  const url = `${BASE_URL}/load/info/${encodeURIComponent(loadNbr)}/${encodeURIComponent(COMPANY)}`;
+  console.log(`[LOAD] ${url}`);
+  const res = await rq(url, { headers: basicHeader() });
+  console.log(`[LOAD] ${res.status}`);
+  if (res.status !== 200) return { error: true, status: res.status };
+  const data = JSON.parse(res.body);
+  const view = data.Load || data.load || data;
+  return {
+    loadNbr: (view.loadHeader || {}).loadNbr || loadNbr,
+    stops: view.stops || [],
+    loadStatus: ((view.loadExecutionInfo || {}).loadStatus) || '',
+  };
+}
+
+// ── Parse Stop ───────────────────────────────────────
+function parseStop(data, pro) {
   const view = data.Stop || data.stop || data;
   const s = view.stop || {}; const l = view.load || {}; const x = view.stopExecutionInfo || {};
   const to = s.to || {}; const a = to.address || {}; const sch = to.schedule || {};
   const w = s.weight ? `${s.weight} ${s.weightUOM||'lbs'}` : '-';
 
-  // Get delivered time from execution info (stopExecutionInfo.to has actual delivery timestamps)
+  // Delivered timestamp from execution info
   const xTo = x.to || {};
   let deliveredAt = '-';
-  // Try actual arrival/departure timestamps first, then fall back to schedule
-  if (xTo.actualArrival || xTo.actualDeparture || xTo.arrivalDTTM || xTo.departureDTTM) {
-    deliveredAt = ft(xTo.actualDeparture || xTo.departureDTTM || xTo.actualArrival || xTo.arrivalDTTM);
-  } else if (x.receiveDTTM) {
-    deliveredAt = ft(x.receiveDTTM);
-  }
+  if (xTo.confirmedDTTM) deliveredAt = ft(xTo.confirmedDTTM);
+  else if (xTo.departureDTTM) deliveredAt = ft(xTo.departureDTTM);
+  else if (xTo.arrivalDTTM) deliveredAt = ft(xTo.arrivalDTTM);
+  else if (x.receiveDTTM) deliveredAt = ft(x.receiveDTTM);
 
   return {
-    pro, stopNbr:s.stopNbr||pro, stopId:s.stopId||'', sealNbr:s.sealNbr||'',
-    bol:s.bol||'', proNumber:s.proNumber||'', accountNumber:s.accountNumber||'',
-    consignee:a.name||'-', address:[a.addr1,a.addr2].filter(Boolean).join(', ')||'-',
-    city:a.city||'', state:a.state||'', zip:a.zip||'',
-    fullAddress:[a.addr1,a.city,a.state,a.zip].filter(Boolean).join(', ')||'-',
-    driver:l.driverName||'-', driverId:l.driverId||'', driverPhone:l.driverPhoneNum||'',
-    route:l.routeName||l.loadNbr||'-', loadNbr:l.loadNbr||'',
-    loadStatus:l.loadStatus||'', vehicleNbr:l.vehicleNbr||'',
-    stop:s.stopSeq||s.altStopSeq||'-', weight:w,
-    pallets:s.totalPallets||'-', cartons:s.totalCartons||'-',
-    pieces:s.totalCartons||s.totalPallets||'-', deliveredAt,
-    stopType:s.stopType||'', reference1:s.reference1||'', reference2:s.reference2||'',
-    status:ms(x.stopStatus,x.exceptionPresent), stopStatusCode:x.stopStatus||'',
-    exceptionPresent:x.exceptionPresent||false,
-    custName:(s.custInfo||{}).custName||'', custAccNbr:(s.custInfo||{}).custAccNbr||'',
-    source:'nuvizz_live',
+    pro, stopNbr: s.stopNbr||pro, stopId: s.stopId||'', sealNbr: s.sealNbr||'',
+    bol: s.bol||'', proNumber: s.proNumber||'', accountNumber: s.accountNumber||'',
+    consignee: a.name||'-', address: [a.addr1,a.addr2].filter(Boolean).join(', ')||'-',
+    city: a.city||'', state: a.state||'', zip: a.zip||'',
+    fullAddress: [a.addr1,a.city,a.state,a.zip].filter(Boolean).join(', ')||'-',
+    driver: l.driverName||'-', driverId: l.driverId||'', driverPhone: l.driverPhoneNum||'',
+    route: l.routeName||l.loadNbr||'-', loadNbr: l.loadNbr||'',
+    loadStatus: l.loadStatus||'', vehicleNbr: l.vehicleNbr||'',
+    stop: s.stopSeq||s.altStopSeq||'-', weight: w,
+    pallets: s.totalPallets||'-', cartons: s.totalCartons||'-',
+    pieces: s.totalCartons||s.totalPallets||'-', deliveredAt,
+    stopType: s.stopType||'', reference1: s.reference1||'', reference2: s.reference2||'',
+    status: ms(x.stopStatus, x.exceptionPresent), stopStatusCode: x.stopStatus||'',
+    exceptionPresent: x.exceptionPresent||false,
+    custName: (s.custInfo||{}).custName||'', custAccNbr: (s.custInfo||{}).custAccNbr||'',
+    flags: [],
+    isForgotten: false,
+    source: 'nuvizz_live',
   };
 }
-function ms(c,e){switch(c){case'90':case'91':case'80':return'delivered';case'99':return'cancelled';case'38':case'50':case'24':case'27':case'30':return'on-truck';case'20':return e?'exception':'planned';case'05':case'10':return'warehouse';default:return'unknown';}}
-function ft(d){if(!d)return'';try{const[,t]=d.split('T');const[h,m]=t.split(':');const hr=parseInt(h,10);return`${hr%12||12}:${m} ${hr>=12?'PM':'AM'}`;}catch(e){return d;}}
 
+function ms(c,e) {
+  switch(c) {
+    case '90': case '91': case '80': return 'delivered';
+    case '99': return 'cancelled';
+    case '38': case '50': case '24': case '27': case '30': return 'on-truck';
+    case '20': return e ? 'exception' : 'planned';
+    case '05': case '10': return 'warehouse';
+    default: return 'unknown';
+  }
+}
+
+function ft(d) {
+  if (!d) return '-';
+  try { const [dt,t]=d.split('T'); const [h,m]=t.split(':'); const hr=parseInt(h,10); return `${hr%12||12}:${m} ${hr>=12?'PM':'AM'}`; }
+  catch(e) { return d; }
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  try { const [y,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}/${y}`; }
+  catch(e) { return d; }
+}
+
+// ── Mock ─────────────────────────────────────────────
 const MOCK = {
-  'DD001234':{pro:'DD001234',consignee:'DCO Tech Dr',driver:'Trevor Seyers',route:'ATL-N Route 2',stop:'3',weight:'840 lbs',status:'warehouse',source:'mock'},
-  'DD005678':{pro:'DD005678',consignee:'Atlanta West Carpets',driver:'Trevarr Howard',route:'ATL-W Route 1',stop:'5',weight:'1120 lbs',status:'delivered',source:'mock'},
-  'DD009999':{pro:'DD009999',consignee:'Floor Works',driver:'Brent Dixon',route:'ATL-S Route 3',stop:'2',weight:'560 lbs',status:'on-truck',source:'mock'},
+  'DD001234':{pro:'DD001234',consignee:'DCO Tech Dr',driver:'Trevor Seyers',route:'ATL-N Route 2',stop:'3',weight:'840 lbs',status:'warehouse',flags:[{type:'route_active',severity:'high',message:'3 other stops on this route already delivered'}],isForgotten:true,source:'mock'},
+  'DD005678':{pro:'DD005678',consignee:'Atlanta West Carpets',driver:'Trevarr Howard',route:'ATL-W Route 1',stop:'5',weight:'1120 lbs',status:'delivered',deliveredAt:'11:45 AM',flags:[],isForgotten:false,source:'mock'},
+  'DD009999':{pro:'DD009999',consignee:'Floor Works',driver:'Brent Dixon',route:'ATL-S Route 3',stop:'2',weight:'560 lbs',status:'on-truck',flags:[],isForgotten:false,source:'mock'},
 };
 
+// ── Handler ──────────────────────────────────────────
 exports.handler = async (event) => {
   const H = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Methods':'POST,GET,OPTIONS','Content-Type':'application/json'};
   if (event.httpMethod==='OPTIONS') return {statusCode:200,headers:H,body:''};
 
   if (event.httpMethod==='GET') {
-    const d = {
-      env:{NUVIZZ_COMPANY:COMPANY,NUVIZZ_USER:USERNAME||'NOT SET',NUVIZZ_PASS:PASSWORD?'***'+PASSWORD.slice(-2):'NOT SET',NUVIZZ_BASE_URL:BASE_URL||'auto-detect'},
-      mode:(!USERNAME||!PASSWORD)?'MOCK':'LIVE',
-      candidates:BASE_URL?[BASE_URL]:URL_CANDIDATES,
-    };
+    const d = { env:{NUVIZZ_COMPANY:COMPANY,NUVIZZ_USER:USERNAME||'NOT SET',NUVIZZ_PASS:PASSWORD?'***'+PASSWORD.slice(-2):'NOT SET',NUVIZZ_BASE_URL:BASE_URL}, mode:(!USERNAME||!PASSWORD)?'MOCK':'LIVE' };
     if (USERNAME&&PASSWORD) {
       try {
-        const a=await getToken();
-        d.auth=a.error?{result:'FAILED',error:a.error,tried:a.tried}:{result:'OK',workingUrl:a.base,token:a.token.slice(0,20)+'...'};
-      } catch(e){d.auth={result:'ERROR',msg:e.message};}
+        const url = `${BASE_URL}/auth/token/${encodeURIComponent(COMPANY)}`;
+        const res = await rq(url, { headers: basicHeader() });
+        if (res.status===200) { const tk=JSON.parse(res.body); d.auth={result:'OK',token:tk.authToken?tk.authToken.slice(0,20)+'...':'none'}; }
+        else d.auth={result:'FAILED',status:res.status,body:res.body.slice(0,200)};
+      } catch(e) { d.auth={result:'ERROR',msg:e.message}; }
     }
     return {statusCode:200,headers:H,body:JSON.stringify(d,null,2)};
   }
