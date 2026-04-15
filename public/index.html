@@ -739,8 +739,27 @@ async function handleScan(code) {
         updateStats();
         fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
       }
-      // Fill in the card with data
-      showResult(entry.pro, data);
+      // Update the card below WITHOUT calling showResult (which disrupts Quagga)
+      const st = data.status||'unknown';
+      const map = STATUS[st]||STATUS.unknown;
+      document.getElementById('res-hdr').className = 'res-hdr '+map.cls;
+      document.getElementById('res-st').innerHTML = `<div class="sdot ${map.cls}"></div>${map.label}`;
+      document.getElementById('res-st').className = 'res-status '+map.cls;
+      document.getElementById('res-pro').textContent = 'PRO# '+(data.pro||code);
+      document.getElementById('r-driver').textContent = data.driver||'-';
+      document.getElementById('r-route').textContent = data.route||data.loadNbr||'-';
+      document.getElementById('r-consignee').textContent = data.consignee||'-';
+      document.getElementById('r-stop').textContent = data.stop||'-';
+      document.getElementById('r-addr').textContent = data.fullAddress||data.address||'-';
+      document.getElementById('r-weight').textContent = data.weight||'-';
+      document.getElementById('r-pcs').textContent = [data.pallets,data.cartons].filter(v=>v&&v!=='-').join(' / ')||'-';
+      const reqDateEl=document.getElementById('r-reqdate');
+      if(data.requestedDateFormatted){reqDateEl.textContent=data.requestedDateFormatted;reqDateEl.style.color=data.requestedDate!==(new Date().toISOString().split('T')[0])?'var(--purple)':'';reqDateEl.style.fontWeight=data.requestedDate!==(new Date().toISOString().split('T')[0])?'700':'';}else{reqDateEl.textContent='-';}
+      document.getElementById('r-sched').textContent = data.deliveredAt||'-';
+      document.getElementById('r-seal').textContent = data.sealNbr||'-';
+      document.getElementById('r-src').innerHTML = '<div class="src-badge src-live"><div class="src-dot"></div>Live NuVizz</div>';
+      document.getElementById('flags-area').innerHTML = '';
+
       const flag = data.isForgotten ? ' ⚠ FORGOTTEN' : (data.isAppointment ? ' 🔔 APPT' : '');
       const name = data.consignee && data.consignee !== '-' ? data.consignee : code;
       lastEl.innerHTML = `<span class="scan-code">${data.pro || code}</span> <span class="scan-result">✓ ${name}${flag}</span>`;
