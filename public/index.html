@@ -63,6 +63,16 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .cam-status{color:var(--accent);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:3px;min-height:16px}
 .cam-stop-btn{position:absolute;bottom:8px;right:8px;z-index:3;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:11px;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:5px 11px;border-radius:20px;cursor:pointer;display:none}
 
+/* ── SCAN OVERLAY (visible during active scanning) ── */
+.scan-overlay{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.scan-reticle{width:220px;height:70px;border:2px solid var(--accent);border-radius:4px;position:relative;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
+.scan-reticle::before{content:'';position:absolute;left:0;right:0;height:2px;background:var(--accent);top:50%;animation:scanline 1.8s ease-in-out infinite;opacity:.8}
+.scan-hint{color:var(--accent);font-size:11px;font-weight:700;font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-top:8px;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.scan-last{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:12px;font-weight:700;font-family:'Barlow Condensed',sans-serif;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7);padding:0 10px;min-height:18px}
+.scan-last .scan-code{color:var(--accent);font-size:14px;letter-spacing:1px}
+.scan-last .scan-result{color:var(--ok);font-size:11px}
+.scan-last .scan-error{color:var(--danger);font-size:11px}
+
 /* ── INPUTS ── */
 .row{display:flex;gap:8px}
 .pro-in{flex:1;height:46px;border:1px solid var(--border);border-radius:8px;padding:0 12px;font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;letter-spacing:1.5px;background:var(--card2);color:var(--text);text-transform:uppercase;outline:none;transition:border .15s}
@@ -223,6 +233,12 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
             <div class="scan-frame"><div class="scan-line"></div></div>
             <div class="cam-msg" id="cam-msg">Tap to activate camera</div>
             <div class="cam-status" id="cam-st"></div>
+          </div>
+          <!-- Overlay shown DURING active scanning (on top of camera feed) -->
+          <div class="scan-overlay" id="scan-overlay" style="display:none">
+            <div class="scan-reticle"></div>
+            <div class="scan-hint" id="scan-hint">Point at PRO barcode ↓</div>
+            <div class="scan-last" id="scan-last"></div>
           </div>
           <button class="cam-stop-btn" id="cam-stop" onclick="camStop(event)">■ Stop</button>
         </div>
@@ -664,51 +680,46 @@ function isValidPRO(code) {
 }
 
 async function handleScan(code) {
-  // Debounce: skip if same code scanned within 3 seconds
   const now = Date.now();
   if (code === lastScannedCode && (now - lastScanTime) < 3000) return;
   lastScannedCode = code;
   lastScanTime = now;
 
-  // Skip if already in this session
   if (scans.find(s => s.pro === code || s.pro === code.padStart(9, '0'))) {
-    toast('Already scanned: ' + code);
+    document.getElementById('scan-last').innerHTML = `<span class="scan-code">${code}</span> <span style="color:var(--accent)">already scanned</span>`;
     return;
   }
 
-  const st = document.getElementById('cam-st');
-  const msg = document.getElementById('cam-msg');
   scanCount++;
-  st.textContent = '✓ ' + code;
   document.getElementById('pro-in').value = code;
   if (navigator.vibrate) navigator.vibrate(100);
 
-  // Auto-lookup in background — don't stop the camera
+  // Show what was scanned immediately in the overlay
+  const lastEl = document.getElementById('scan-last');
+  lastEl.innerHTML = `<span class="scan-code">${code}</span> <span style="opacity:.6">looking up...</span>`;
+  document.getElementById('scan-hint').textContent = `${scanCount} scanned · keep going`;
+
   try {
     const res = await fetch(`${API}/nuvizz-lookup`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pro:code})});
     const data = await res.json();
     if (data.error) {
-      msg.textContent = `⚠ ${code}: ${data.message || 'not found'}`;
-      st.textContent = `${scanCount} scanned · last: ${code}`;
+      lastEl.innerHTML = `<span class="scan-code">${code}</span> <span class="scan-error">⚠ ${data.message || 'not found'}</span>`;
     } else {
-      // Auto-log it
       const entry = {pro:code, ...data, ts:new Date().toISOString(), time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-      // Use padded PRO if data came back with one
       if (data.pro) entry.pro = data.pro;
       if (!scans.find(s => s.pro === entry.pro)) {
         scans.push(entry);
         updateStats();
-        // Fire to Firebase in background
         fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
       }
       const flag = data.isForgotten ? ' ⚠ FORGOTTEN' : (data.isAppointment ? ' 🔔 APPT' : '');
-      msg.textContent = `✓ ${data.consignee || code}${flag}`;
-      st.textContent = `${scans.length} logged · scanning...`;
+      const name = data.consignee && data.consignee !== '-' ? data.consignee : code;
+      lastEl.innerHTML = `<span class="scan-code">${data.pro || code}</span> <span class="scan-result">✓ ${name}${flag}</span>`;
+      document.getElementById('scan-hint').textContent = `${scans.length} logged · keep scanning`;
     }
   } catch(e) {
-    msg.textContent = `Network error on ${code}`;
+    lastEl.innerHTML = `<span class="scan-code">${code}</span> <span class="scan-error">network error</span>`;
   }
-  // Update the scan badge
   document.getElementById('scan-ct-badge').textContent = scans.length + ' scanned';
 }
 
@@ -754,8 +765,7 @@ async function camStart(){
       camOn=true;
       stopBtn.style.display='block';
       document.getElementById('cam-ui').style.display='none';
-      msg.textContent='Point at PRO barcode · scanning...';
-      st.textContent='0 scanned';
+      document.getElementById('scan-overlay').style.display='';
 
       const qVid=qContainer.querySelector('video');
       if(qVid) qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
@@ -785,7 +795,7 @@ async function camStart(){
     await vid.play();
     camOn=true;stopBtn.style.display='block';
     document.getElementById('cam-ui').style.display='none';
-    msg.textContent='Point at PRO barcode · scanning...';st.textContent='0 scanned';
+    document.getElementById('scan-overlay').style.display='';
 
     if('BarcodeDetector' in window){
       const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','itf','codabar','upc_a']});
@@ -816,6 +826,7 @@ function camStop(e){
   const qc=document.getElementById('quagga-container');
   if(qc)qc.style.display='none';
   document.getElementById('cam-ui').style.display='';
+  document.getElementById('scan-overlay').style.display='none';
   const vid=document.getElementById('cam-vid');
   if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
   vid.style.display='none';
