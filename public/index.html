@@ -191,7 +191,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
     </div>
     <div class="hdr-r">
-      <span class="ver" id="ver">v2.0</span>
+      <span class="ver" id="ver">v3.4</span>
       <div class="hdr-time" id="clock">--:-- --</div>
     </div>
   </div>
@@ -289,11 +289,12 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.18.6/zxing.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
-const APP_VERSION = 'v2.0';
+const APP_VERSION = 'v3.4';
 let scans = [];
 let current = null;
 let camOn = false;
 let codeReader = null;
+let scanInterval = null;
 const API = '/api';
 
 // ── Status config ──────────────────────────────
@@ -656,35 +657,92 @@ async function camStart(){
 
   try{
     msg.textContent='Starting camera...';
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280}}});
-    vid.srcObject=stream;vid.style.display='block';
-    camOn=true;stopBtn.style.display='block';
-    msg.textContent='Align barcode in frame';
+    // Request high-res rear camera for barcode reading
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:'environment',
+        width:{ideal:1920,min:1280},
+        height:{ideal:1080,min:720},
+      }
+    });
+    vid.srcObject=stream;
+    vid.style.display='block';
+    await vid.play();
+    camOn=true;
+    stopBtn.style.display='block';
+    msg.textContent='Point at barcode';
     st.textContent='Scanning...';
 
-    if(window.ZXing){
-      codeReader=new ZXing.BrowserMultiFormatReader();
-      codeReader.decodeFromVideoDevice(null,'cam-vid',(result,err)=>{
-        if(result){
-          const code=result.getText();
-          document.getElementById('pro-in').value=code;
-          st.textContent='✓ '+code;
-          msg.textContent='Code captured!';
-          lookup(code);
-          camStop(null);
-        }
+    // Use native BarcodeDetector if available (iOS Safari 17+, Chrome 83+)
+    if ('BarcodeDetector' in window) {
+      console.log('[SCAN] Using native BarcodeDetector');
+      const detector = new BarcodeDetector({
+        formats: ['code_128','code_39','ean_13','ean_8','itf','codabar','upc_a','upc_e']
       });
-    }else{
-      st.textContent='Type PRO below ↓';
+      scanInterval = setInterval(async () => {
+        if (!camOn || vid.readyState < 2) return;
+        try {
+          const barcodes = await detector.detect(vid);
+          if (barcodes.length > 0) {
+            const code = barcodes[0].rawValue;
+            if (code && code.length >= 4) {
+              clearInterval(scanInterval);
+              document.getElementById('pro-in').value = code;
+              st.textContent = '✓ ' + code;
+              msg.textContent = 'Barcode captured!';
+              // Vibrate on success if available
+              if (navigator.vibrate) navigator.vibrate(100);
+              lookup(code);
+              camStop(null);
+            }
+          }
+        } catch(e) { /* frame not ready */ }
+      }, 250); // scan 4x per second
+    }
+    // Fallback: ZXing library
+    else if (window.ZXing) {
+      console.log('[SCAN] Using ZXing fallback');
+      codeReader = new ZXing.BrowserMultiFormatReader();
+      // Use canvas-based decoding for better reliability
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      scanInterval = setInterval(() => {
+        if (!camOn || vid.readyState < 2) return;
+        canvas.width = vid.videoWidth;
+        canvas.height = vid.videoHeight;
+        ctx.drawImage(vid, 0, 0);
+        try {
+          const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+          const binary = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminance));
+          const result = codeReader.decodeBitmap(binary);
+          if (result) {
+            clearInterval(scanInterval);
+            const code = result.getText();
+            document.getElementById('pro-in').value = code;
+            st.textContent = '✓ ' + code;
+            msg.textContent = 'Barcode captured!';
+            if (navigator.vibrate) navigator.vibrate(100);
+            lookup(code);
+            camStop(null);
+          }
+        } catch(e) { /* no barcode in frame */ }
+      }, 300);
+    }
+    else {
+      st.textContent='Manual entry ↓';
+      msg.textContent='No barcode scanner available — type PRO below';
     }
   }catch(e){
-    msg.textContent='Camera unavailable — use manual entry below';
-    st.textContent='';camOn=false;
+    msg.textContent='Camera blocked — use manual entry below';
+    st.textContent='';
+    camOn=false;
+    console.error('[CAM]', e);
   }
 }
 
 function camStop(e){
   if(e)e.stopPropagation();
+  if(scanInterval){clearInterval(scanInterval);scanInterval=null;}
   if(codeReader){try{codeReader.reset()}catch(_){}codeReader=null}
   const vid=document.getElementById('cam-vid');
   if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
