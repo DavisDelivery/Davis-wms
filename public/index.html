@@ -702,24 +702,30 @@ async function camStart(){
       msg.textContent='Point at barcode';
       st.textContent='Scanning...';
 
-      // Style the Quagga video
+      // Hide the scan frame overlay so you can see the camera
+      document.getElementById('cam-ui').style.display='none';
+
+      // Style the Quagga video to fill the container and be VISIBLE
       const qVid=qContainer.querySelector('video');
       if(qVid){
-        qVid.style.cssText='width:100%;height:100%;object-fit:cover;';
+        qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
       }
-      const qCanvas=qContainer.querySelector('canvas');
-      if(qCanvas) qCanvas.style.display='none';
+      // Hide Quagga's drawing canvas (green boxes)
+      const qCanvases=qContainer.querySelectorAll('canvas');
+      qCanvases.forEach(c=>c.style.display='none');
 
       Quagga.onDetected((result)=>{
         if(!camOn)return;
         const code=result.codeResult.code;
-        if(code&&code.length>=4){
+        if(code&&code.length>=5){
+          // Show the code but don't auto-lookup — let user verify
           document.getElementById('pro-in').value=code;
           st.textContent='✓ '+code;
-          msg.textContent='Barcode captured!';
+          msg.textContent='Tap LOOK UP or scan again';
           if(navigator.vibrate)navigator.vibrate(100);
           camStop(null);
-          lookup(code);
+          // Auto-lookup after brief pause so user can see what was scanned
+          setTimeout(()=>lookup(code), 400);
         }
       });
 
@@ -774,6 +780,8 @@ function camStop(e){
   if(window.Quagga){try{Quagga.stop();}catch(_){}}
   const qc=document.getElementById('quagga-container');
   if(qc)qc.style.display='none';
+  // Restore scan frame overlay
+  document.getElementById('cam-ui').style.display='';
   // Stop native camera
   const vid=document.getElementById('cam-vid');
   if(vid.srcObject){vid.srcObject.getTracks().forEach(t=>t.stop());vid.srcObject=null}
