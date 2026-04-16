@@ -204,7 +204,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
     </div>
     <div class="hdr-r">
-      <span class="ver" id="ver">v3.4</span>
+      <span class="ver" id="ver">v4.5</span>
       <div class="hdr-time" id="clock">--:-- --</div>
     </div>
   </div>
@@ -286,12 +286,14 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="log-title">Session Scan Log</div>
       <div class="log-actions">
         <button class="btn-sm" onclick="exportCSV()">Export CSV</button>
-        <button class="btn-sm danger" onclick="clearSession()">Clear</button>
+        <button class="btn-sm" style="background:var(--blue-lt);color:var(--blue)" onclick="newSession()">+ New Session</button>
       </div>
     </div>
     <div id="log-list">
       <div class="empty"><div class="empty-icon">📦</div>No scans yet — go to Scan tab to begin.</div>
     </div>
+    <!-- Past Sessions -->
+    <div id="past-sessions"></div>
   </div>
 
   <!-- ════ REPORT TAB ════ -->
@@ -308,13 +310,86 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
-const APP_VERSION = 'v3.4';
+const APP_VERSION = 'v4.5';
 let scans = [];
 let current = null;
 let camOn = false;
 let codeReader = null;
 let scanInterval = null;
 const API = '/api';
+
+// ── Session Management (localStorage) ──────────
+let sessionId = '';
+let sessionStart = '';
+
+function generateSessionId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+
+function loadCurrentSession() {
+  try {
+    const saved = localStorage.getItem('wms_current_session');
+    if (saved) {
+      const s = JSON.parse(saved);
+      sessionId = s.sessionId || '';
+      sessionStart = s.sessionStart || '';
+      scans = s.scans || [];
+    }
+    if (!sessionId) startNewSession(true);
+  } catch(e) { startNewSession(true); }
+}
+
+function saveCurrentSession() {
+  try {
+    localStorage.setItem('wms_current_session', JSON.stringify({
+      sessionId, sessionStart, scans
+    }));
+  } catch(e) {}
+}
+
+function startNewSession(silent) {
+  // Archive current session if it has scans
+  if (scans.length > 0 && sessionId) {
+    archiveSession();
+  }
+  sessionId = generateSessionId();
+  sessionStart = new Date().toISOString();
+  scans = [];
+  current = null;
+  saveCurrentSession();
+  updateStats();
+  document.getElementById('result').classList.remove('show');
+  document.getElementById('flags-area').innerHTML = '';
+  if (!silent) {
+    renderLog();
+    toast('New session started');
+  }
+}
+
+function archiveSession() {
+  if (!scans.length) return;
+  try {
+    const history = JSON.parse(localStorage.getItem('wms_session_history') || '[]');
+    history.unshift({
+      sessionId,
+      sessionStart,
+      sessionEnd: new Date().toISOString(),
+      scanCount: scans.length,
+      scans: scans,
+    });
+    // Keep last 50 sessions
+    if (history.length > 50) history.length = 50;
+    localStorage.setItem('wms_session_history', JSON.stringify(history));
+  } catch(e) {}
+}
+
+function getSessionHistory() {
+  try { return JSON.parse(localStorage.getItem('wms_session_history') || '[]'); }
+  catch(e) { return []; }
+}
+
+// Load session on startup
+loadCurrentSession();
 
 // ── Status config ──────────────────────────────
 const STATUS = {
@@ -330,6 +405,8 @@ const STATUS = {
 // ── Clock ──────────────────────────────────────
 function tick(){const n=new Date(),h=n.getHours(),m=String(n.getMinutes()).padStart(2,'0');document.getElementById('clock').textContent=`${h%12||12}:${m} ${h>=12?'PM':'AM'}`}
 tick();setInterval(tick,30000);
+// Update stats from loaded session
+updateStats();
 
 // ── Tabs ───────────────────────────────────────
 function tab(name,btn){
@@ -511,6 +588,7 @@ async function logScan(){
   try{await fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:current})})}catch(e){}
 
   scans.push({...current});
+  saveCurrentSession();
   lb.textContent='✓ Logged';lb.className='btn-act logged';lb.disabled=true;
   document.getElementById('pro-in').value='';
   updateStats();
@@ -520,19 +598,47 @@ async function logScan(){
 // ── Log Tab ────────────────────────────────────
 function renderLog(){
   const el=document.getElementById('log-list');
-  if(!scans.length){el.innerHTML='<div class="empty"><div class="empty-icon">📦</div>No scans yet.</div>';return}
-  el.innerHTML=scans.slice().reverse().map(s=>{
-    const map=STATUS[s.status]||STATUS.unknown;
-    const label=map.label.replace(/^[✓●⚠◎✕—?]\s*/,'');
-    return `<div class="scan-item">
-      <div class="si-l">
-        <div class="si-pro">PRO# ${s.pro}</div>
-        <div class="si-sub">${s.driver||'—'} · ${s.consignee||'—'} · ${s.weight||''}</div>
-      </div>
-      <div class="pill ${map.cls}">${label}</div>
-      <div class="si-time">${s.time||''}</div>
+  if(!scans.length){el.innerHTML='<div class="empty"><div class="empty-icon">📦</div>No scans yet — start scanning.</div>';}
+  else {
+    el.innerHTML=scans.slice().reverse().map(s=>{
+      const isAppt = s.isAppointment || s.status === 'appointment';
+      const map = isAppt ? {cls:'on-truck',label:'🔔 Appt'} : (STATUS[s.status]||STATUS.unknown);
+      const label = isAppt ? 'Appt' : map.label.replace(/^[✓●⚠◎✕—?]\s*/,'');
+      return `<div class="scan-item">
+        <div class="si-l">
+          <div class="si-pro">PRO# ${s.pro}</div>
+          <div class="si-sub">${s.driver||'—'} · ${s.consignee||'—'} · ${s.weight||''}</div>
+        </div>
+        <div class="pill ${isAppt ? 'on-truck' : map.cls}">${label}</div>
+        <div class="si-time">${s.time||''}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Show past sessions
+  const pastEl = document.getElementById('past-sessions');
+  const history = getSessionHistory();
+  if (history.length > 0) {
+    pastEl.innerHTML = `<div style="margin-top:16px">
+      <div class="log-title" style="font-size:14px;margin-bottom:8px;color:var(--muted)">Past Sessions</div>
+      ${history.slice(0,10).map((h,i) => {
+        const d = new Date(h.sessionStart);
+        const dateStr = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+        const timeStr = d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+        const forgotten = (h.scans||[]).filter(s=>s.isForgotten).length;
+        const appts = (h.scans||[]).filter(s=>s.isAppointment||s.status==='appointment').length;
+        return `<div class="scan-item" style="cursor:pointer" onclick="viewPastSession(${i})">
+          <div class="si-l">
+            <div class="si-pro">${dateStr} · ${timeStr}</div>
+            <div class="si-sub">${h.scanCount} scans${forgotten?' · '+forgotten+' forgotten':''}${appts?' · '+appts+' appt':''}</div>
+          </div>
+          <div class="si-time" style="font-size:12px">→</div>
+        </div>`;
+      }).join('')}
     </div>`;
-  }).join('');
+  } else {
+    pastEl.innerHTML = '';
+  }
 }
 
 // ── Report Tab ─────────────────────────────────
@@ -669,8 +775,51 @@ function clearSession(){
   if(!scans.length)return;
   if(!confirm(`Clear all ${scans.length} scans from this session?`))return;
   scans=[];current=null;
+  saveCurrentSession();
   updateStats();renderLog();
+  document.getElementById('result').classList.remove('show');
   toast('Session cleared');
+}
+
+function newSession(){
+  if(scans.length > 0 && !confirm(`End current session (${scans.length} scans) and start new?`))return;
+  startNewSession(false);
+  renderLog();
+}
+
+// ── View Past Session ─────────────────────────
+function viewPastSession(idx) {
+  const history = getSessionHistory();
+  if (!history[idx]) return;
+  const h = history[idx];
+  const d = new Date(h.sessionStart);
+  const dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  const timeStr = d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  
+  const el = document.getElementById('log-list');
+  const forgotten = (h.scans||[]).filter(s=>s.isForgotten).length;
+  const appts = (h.scans||[]).filter(s=>s.isAppointment||s.status==='appointment').length;
+  
+  el.innerHTML = `<div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <div style="font-weight:700;font-size:14px">${dateStr} · ${timeStr}</div>
+      <div style="font-size:12px;color:var(--muted)">${h.scanCount} scans${forgotten?' · '+forgotten+' forgotten':''}${appts?' · '+appts+' appt':''}</div>
+    </div>
+    <button class="btn-sm" onclick="renderLog()">← Back</button>
+  </div>` +
+  (h.scans||[]).slice().reverse().map(s=>{
+    const isAppt = s.isAppointment || s.status === 'appointment';
+    const map = isAppt ? {cls:'on-truck',label:'🔔 Appt'} : (STATUS[s.status]||STATUS.unknown);
+    const label = isAppt ? 'Appt' : map.label.replace(/^[✓●⚠◎✕—?]\s*/,'');
+    return `<div class="scan-item">
+      <div class="si-l">
+        <div class="si-pro">PRO# ${s.pro}</div>
+        <div class="si-sub">${s.driver||'—'} · ${s.consignee||'—'}</div>
+      </div>
+      <div class="pill ${isAppt?'on-truck':map.cls}">${label}</div>
+      <div class="si-time">${s.time||''}</div>
+    </div>`;
+  }).join('');
 }
 
 // ── Camera ─────────────────────────────────────
@@ -744,6 +893,7 @@ async function handleScan(code) {
       if (data.pro) entry.pro = data.pro;
       if (!scans.find(s => s.pro === entry.pro)) {
         scans.push(entry);
+        saveCurrentSession();
         updateStats();
         fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
       }
