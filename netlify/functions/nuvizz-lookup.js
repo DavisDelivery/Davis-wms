@@ -236,6 +236,19 @@ function parseStop(data, pro) {
   else if (xTo.arrivalDTTM) deliveredAt = ft(xTo.arrivalDTTM);
   else if (x.receiveDTTM) deliveredAt = ft(x.receiveDTTM);
 
+  // Extract product details (what's supposed to be in the order)
+  const rawDetails = s.stopDetails || [];
+  const detailsList = Array.isArray(rawDetails) ? rawDetails : (rawDetails.stopDetail || []);
+  const products = (Array.isArray(detailsList) ? detailsList : [detailsList]).filter(Boolean).map(d => ({
+    product: d.product || '',
+    quantity: d.quantity || '',
+    uom: d.quantityUOM || '',
+    orderDate: d.orderDate || '',
+    palletID: (d.palletID && d.palletID.palletID) || '',
+    weight: d.weight || '',
+    description: d.productDescription || d.description || '',
+  }));
+
   return {
     pro, stopNbr: s.stopNbr||pro, stopId: s.stopId||'', sealNbr: s.sealNbr||'',
     bol: s.bol||'', proNumber: s.proNumber||'', accountNumber: s.accountNumber||'',
@@ -252,6 +265,7 @@ function parseStop(data, pro) {
     status: ms(x.stopStatus, x.exceptionPresent), stopStatusCode: x.stopStatus||'',
     exceptionPresent: x.exceptionPresent||false,
     custName: (s.custInfo||{}).custName||'', custAccNbr: (s.custInfo||{}).custAccNbr||'',
+    products,
     flags: [],
     isForgotten: false,
     source: 'nuvizz_live',

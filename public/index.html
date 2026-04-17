@@ -116,6 +116,19 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .src-live .src-dot{background:#2d9e5f}.src-mock .src-dot{background:var(--accent)}
 
 .btn-actions{display:flex;gap:8px;margin-top:12px}
+
+/* ── PRODUCTS DROPDOWN ── */
+.btn-products{width:100%;margin-top:10px;padding:10px 14px;background:#f0f4fa;border:1px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-family:inherit;font-size:13px;font-weight:600;color:var(--blue);transition:background .15s}
+.btn-products:active{background:#e4ecf7}
+.btn-products.open #products-chev{transform:rotate(180deg)}
+#products-chev{transition:transform .2s;font-size:10px}
+.products-panel{margin-top:8px;background:#f8faff;border:1px solid var(--border);border-radius:8px;padding:10px;max-height:240px;overflow-y:auto}
+.prod-item{padding:8px 10px;border-bottom:1px solid #e5eaf2;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+.prod-item:last-child{border-bottom:none}
+.prod-name{font-size:12px;font-weight:600;color:var(--dark);line-height:1.3;word-break:break-word}
+.prod-desc{font-size:11px;color:var(--muted);margin-top:2px}
+.prod-qty{font-size:12px;font-weight:700;color:var(--blue);white-space:nowrap;font-family:'Barlow Condensed',sans-serif}
+.prod-empty{padding:10px;text-align:center;font-size:12px;color:var(--muted)}
 .btn-act{flex:1;height:42px;border:none;border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:all .15s}
 .btn-act.primary{background:var(--blue);color:#fff}.btn-act.primary:hover{background:var(--blue-dk)}
 .btn-act.logged{background:var(--ok);color:#fff}
@@ -204,7 +217,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
     </div>
     <div class="hdr-r">
-      <span class="ver" id="ver">v4.5</span>
+      <span class="ver" id="ver">v4.6</span>
       <div class="hdr-time" id="clock">--:-- --</div>
     </div>
   </div>
@@ -272,6 +285,11 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
         <div id="r-src"></div>
         <div id="flags-area"></div>
+        <button class="btn-products" id="products-toggle" onclick="toggleProducts()" style="display:none">
+          <span>📦 Order Contents</span>
+          <span id="products-chev">▼</span>
+        </button>
+        <div class="products-panel" id="products-panel" style="display:none"></div>
         <div class="btn-actions">
           <button class="btn-act primary" id="log-btn" onclick="logScan()">Log Scan</button>
           <button class="btn-act secondary" onclick="clearResult()">Clear</button>
@@ -310,7 +328,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
-const APP_VERSION = 'v4.5';
+const APP_VERSION = 'v4.6';
 let scans = [];
 let current = null;
 let camOn = false;
@@ -525,6 +543,9 @@ function showResult(pro,data){
   const isLive=data.source==='nuvizz_live';
   srcEl.innerHTML=`<div class="src-badge ${isLive?'src-live':'src-mock'}"><div class="src-dot"></div>${isLive?'Live NuVizz':'Mock Data'}</div>`;
 
+  // Products dropdown
+  renderProducts(data.products);
+
   // Flags area
   const flagsEl=document.getElementById('flags-area');
   const flags = data.flags || [];
@@ -569,6 +590,8 @@ function showResult(pro,data){
 function clearResult(){
   document.getElementById('result').classList.remove('show');
   document.getElementById('pro-in').value='';
+  document.getElementById('products-toggle').style.display = 'none';
+  document.getElementById('products-panel').style.display = 'none';
   current=null;
 }
 
@@ -770,6 +793,41 @@ function exportReport(){
   }
 }
 
+// ── Products Dropdown ──────────────────────────
+function toggleProducts() {
+  const panel = document.getElementById('products-panel');
+  const btn = document.getElementById('products-toggle');
+  const open = panel.style.display === 'block';
+  panel.style.display = open ? 'none' : 'block';
+  btn.classList.toggle('open', !open);
+}
+
+function renderProducts(products) {
+  const btn = document.getElementById('products-toggle');
+  const panel = document.getElementById('products-panel');
+  // Reset state
+  panel.style.display = 'none';
+  btn.classList.remove('open');
+  
+  if (!products || products.length === 0) {
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = 'flex';
+  btn.querySelector('span').textContent = `📦 Order Contents (${products.length} ${products.length === 1 ? 'item' : 'items'})`;
+  
+  panel.innerHTML = products.map(p => `
+    <div class="prod-item">
+      <div>
+        <div class="prod-name">${p.product || '—'}</div>
+        ${p.description ? `<div class="prod-desc">${p.description}</div>` : ''}
+        ${p.palletID ? `<div class="prod-desc">Pallet ${p.palletID}</div>` : ''}
+      </div>
+      <div class="prod-qty">${p.quantity || ''} ${p.uom || ''}</div>
+    </div>
+  `).join('');
+}
+
 // ── Clear Session ──────────────────────────────
 function clearSession(){
   if(!scans.length)return;
@@ -880,6 +938,8 @@ async function handleScan(code) {
   document.getElementById('r-seal').textContent = '...';
   document.getElementById('r-src').innerHTML = '';
   document.getElementById('flags-area').innerHTML = '';
+  document.getElementById('products-toggle').style.display = 'none';
+  document.getElementById('products-panel').style.display = 'none';
 
   try {
     // quick:true skips the slow load info check for instant response
@@ -929,6 +989,8 @@ async function handleScan(code) {
       document.getElementById('r-sched').textContent = data.deliveredAt||'-';
       document.getElementById('r-seal').textContent = data.sealNbr||'-';
       document.getElementById('r-src').innerHTML = '<div class="src-badge src-live"><div class="src-dot"></div>Live NuVizz</div>';
+      // Products dropdown
+      renderProducts(data.products);
       // Show flags if any
       const flags = data.flags || [];
       if (flags.length > 0) {
@@ -1000,14 +1062,33 @@ async function camStart(){
         Quagga.init({
           inputStream:{
             name:'Live',type:'LiveStream',target:qContainer,
-            constraints:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},
+            constraints:{
+              facingMode:'environment',
+              width:{ideal:1920,min:1280},
+              height:{ideal:1080,min:720},
+              aspectRatio:{ideal:16/9},
+              // Focus mode for sharper barcodes
+              focusMode:'continuous',
+              advanced:[{focusMode:'continuous'},{focusMode:'auto'}]
+            },
+            area:{ // Only scan center 60% of frame for better accuracy
+              top:'20%',
+              right:'10%',
+              left:'10%',
+              bottom:'20%',
+            },
           },
+          locator:{
+            patchSize:'medium',
+            halfSample:true,
+          },
+          numOfWorkers:navigator.hardwareConcurrency||4,
           decoder:{
             readers:['code_128_reader','code_39_reader','i2of5_reader','codabar_reader'],
             multiple:false,
           },
           locate:true,
-          frequency:15,
+          frequency:20,
         },(err)=>{if(err){reject(err);return;}resolve();});
       });
 
@@ -1021,13 +1102,28 @@ async function camStart(){
       if(qVid) qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
       qContainer.querySelectorAll('canvas').forEach(c=>c.style.display='none');
 
+      // Multi-frame confirmation: require 2 matching reads before accepting
+      // This dramatically reduces misreads on worn/blurry labels
+      const pendingReads = {};
       Quagga.onDetected((result)=>{
         if(!camOn)return;
         const code=result.codeResult.code;
-        if(isValidPRO(code)){
+        if(!isValidPRO(code)) return;
+        // Check decode quality - Quagga gives an error score per digit
+        const errors = (result.codeResult.decodedCodes||[])
+          .map(d=>d.error).filter(e=>e!==undefined);
+        const avgError = errors.length ? errors.reduce((a,b)=>a+b,0)/errors.length : 0;
+        // Skip reads with poor decode quality
+        if (avgError > 0.15) return;
+
+        pendingReads[code] = (pendingReads[code]||0) + 1;
+        // Need 2 matching reads to confirm
+        if (pendingReads[code] >= 2) {
+          delete pendingReads[code];
+          // Clear other pending codes to avoid cross-contamination
+          Object.keys(pendingReads).forEach(k=>delete pendingReads[k]);
           handleScan(code);
         }
-        // Silently ignore non-PRO barcodes (OG numbers, etc.)
       });
 
       return;
