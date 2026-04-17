@@ -125,9 +125,9 @@ async function tryStopLookup(pro, quick) {
       if (loadData && !loadData.error) {
         const stops = loadData.stops || [];
         const thisStopNbr = result.stopNbr || pro;
+        const loadStatus = loadData.loadStatus || '';
 
         // Flag 2: Check if any part of this stop has been delivered (multipiece)
-        // If the stop itself shows status < 90 but execution has partial completion
         const exec = ((data.Stop || data.stop || data).stopExecutionInfo || {});
         const xTo = exec.to || {};
         if (result.status !== 'delivered' && (xTo.confirmedDTTM || xTo.arrivalDTTM || xTo.departureDTTM)) {
@@ -135,8 +135,9 @@ async function tryStopLookup(pro, quick) {
           result.flags.push({ type: 'partial_delivery', severity: 'high', message: 'Partial delivery detected — driver visited this stop but freight still here' });
         }
 
-        // Flag 3: Check if ANY other stop on this route has been delivered
+        // Flag 3: Check if ANY other stop on this route has been delivered OR is on truck
         const deliveredStops = [];
+        const onTruckStops = [];
         for (const ls of stops) {
           const lsStop = ls.stop || {};
           const lsExec = ls.stopExecutionInfo || {};
@@ -144,43 +145,56 @@ async function tryStopLookup(pro, quick) {
           if (lsStopNbr === thisStopNbr) continue; // skip self
           
           const lsStatus = lsExec.stopStatus || '';
-          // 90=Completed, 91=Manually Completed, 80=Closed
+          const lsAddr = ((lsStop.to || {}).address || {});
+          // 90/91=Completed, 80=Closed → delivered
           if (lsStatus === '90' || lsStatus === '91' || lsStatus === '80') {
-            const lsAddr = ((lsStop.to || {}).address || {});
-            deliveredStops.push({
-              stopNbr: lsStopNbr,
-              consignee: lsAddr.name || lsStopNbr,
-              status: lsStatus,
-            });
+            deliveredStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus });
+            continue;
           }
-          // Also check if stop has actual arrival/departure timestamps
+          // 24/27/30/38/50 → on truck (truck is moving with this stop on it)
+          if (['24','27','30','38','50'].includes(lsStatus)) {
+            onTruckStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus });
+            continue;
+          }
+          // Also catch delivery timestamps (backup check)
           const lsTo = lsExec.to || {};
-          if (!deliveredStops.find(d => d.stopNbr === lsStopNbr) && (lsTo.confirmedDTTM || lsTo.departureDTTM)) {
-            deliveredStops.push({
-              stopNbr: lsStopNbr,
-              consignee: ((lsStop.to || {}).address || {}).name || lsStopNbr,
-              status: lsStatus,
-              note: 'has delivery timestamps',
-            });
+          if (lsTo.confirmedDTTM || lsTo.departureDTTM) {
+            deliveredStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus, note: 'has delivery timestamps' });
           }
         }
 
-        if (deliveredStops.length > 0 && result.status !== 'delivered') {
-          result.flags = result.flags || [];
-          result.flags.push({
-            type: 'route_active',
-            severity: 'high',
-            message: `${deliveredStops.length} other stop(s) on this route already delivered — this freight is forgotten`,
-            deliveredStops: deliveredStops.slice(0, 5), // limit to 5 for payload size
-          });
+        // Load status 30/32/33/40 means truck is dispatched/in-progress
+        // loadStatus codes: 30=Dispatched, 32=Driver Arrived, 33=Driver Initiated, 40=In-Progress
+        const loadInProgress = ['30','32','33','40'].includes(loadStatus);
+
+        // Flag if route is active and this freight is still in warehouse
+        if (result.status !== 'delivered' && result.status !== 'on-truck') {
+          if (deliveredStops.length > 0) {
+            result.flags = result.flags || [];
+            result.flags.push({
+              type: 'route_active',
+              severity: 'high',
+              message: `${deliveredStops.length} other stop(s) on this route already delivered — this freight was forgotten`,
+              deliveredStops: deliveredStops.slice(0, 5),
+            });
+          } else if (onTruckStops.length > 0 || loadInProgress) {
+            result.flags = result.flags || [];
+            result.flags.push({
+              type: 'route_active',
+              severity: 'high',
+              message: `Truck is already on the road (${onTruckStops.length} other stops on truck) — this freight was forgotten`,
+              deliveredStops: onTruckStops.slice(0, 5),
+            });
+          }
         }
 
         result.routeStopCount = stops.length;
         result.routeDeliveredCount = deliveredStops.length;
+        result.routeOnTruckCount = onTruckStops.length;
+        result.loadStatus = loadStatus;
       }
     } catch (e) {
       console.log(`[LOAD] Error fetching load ${loadNbr}: ${e.message}`);
-      // Non-fatal — still return the stop data
     }
   }
 
