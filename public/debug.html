@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>WMS Debug</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;padding:15px;max-width:800px;margin:0 auto;background:#f5f5f5}
+h1{font-size:20px}
+input{width:100%;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:6px;margin-bottom:10px;box-sizing:border-box}
+button{width:100%;padding:12px;font-size:16px;background:#2a5ba3;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer}
+pre{background:#fff;padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+.stop{background:#fff;padding:10px;margin:6px 0;border-radius:6px;border-left:4px solid #999}
+.stop.delivered{border-left-color:#2d9e5f}
+.stop.ontruck{border-left-color:#d9a018}
+.stop.planned{border-left-color:#999}
+.stop.me{border-left-color:#2a5ba3;background:#e8f0fa}
+.label{font-size:11px;color:#999;text-transform:uppercase;font-weight:700;letter-spacing:.5px}
+.val{font-size:14px}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;margin-left:6px}
+.badge.delivered{background:#2d9e5f;color:#fff}
+.badge.ontruck{background:#d9a018;color:#fff}
+.badge.planned{background:#e0e0e0;color:#555}
+</style>
+</head>
+<body>
+<h1>WMS Route Debug</h1>
+<p>Enter a PRO to see the full route data.</p>
+<input id="pro" placeholder="e.g. 7106884" inputmode="numeric" />
+<button onclick="check()">Check Route</button>
+<div id="out" style="margin-top:15px"></div>
+<script>
+async function check() {
+  const pro = document.getElementById('pro').value.trim();
+  if (!pro) return;
+  const out = document.getElementById('out');
+  out.innerHTML = 'Loading...';
+  try {
+    const res = await fetch('/api/nuvizz-lookup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pro, debug:true})});
+    const data = await res.json();
+    if (data.error) { out.innerHTML = '<pre>'+JSON.stringify(data,null,2)+'</pre>'; return; }
+    const s = data.summary;
+    if (!s) { out.innerHTML = '<pre>No load data.\n'+JSON.stringify(data,null,2)+'</pre>'; return; }
+
+    const STATUS_MAP = {
+      '90':{cls:'delivered',label:'Delivered'},
+      '91':{cls:'delivered',label:'Delivered (manual)'},
+      '80':{cls:'delivered',label:'Closed'},
+      '24':{cls:'ontruck',label:'On Truck'},
+      '27':{cls:'ontruck',label:'On Truck'},
+      '30':{cls:'ontruck',label:'On Truck'},
+      '38':{cls:'ontruck',label:'On Truck'},
+      '50':{cls:'ontruck',label:'On Truck'},
+      '20':{cls:'planned',label:'Planned'},
+      '05':{cls:'planned',label:'Warehouse'},
+      '10':{cls:'planned',label:'Warehouse'},
+      '99':{cls:'planned',label:'Cancelled'},
+    };
+
+    let html = `<div class="stop">
+      <div class="label">Load / Route</div>
+      <div class="val"><b>${s.loadNbr||'-'}</b> · ${s.routeName||'-'}</div>
+      <div class="label" style="margin-top:6px">Load Status</div>
+      <div class="val"><b>${s.loadStatus||'-'}</b></div>
+      <div class="label" style="margin-top:6px">Start Time</div>
+      <div class="val">${s.actualStartDTTM||'Not started'}</div>
+    </div>`;
+    html += `<div class="label" style="margin:14px 0 6px">${s.stops.length} Stops on This Route</div>`;
+    s.stops.forEach(st => {
+      const isMe = st.stopNbr === data.thisStop;
+      const m = STATUS_MAP[st.stopStatus] || {cls:'planned', label:'Status '+(st.stopStatus||'none')};
+      html += `<div class="stop ${m.cls} ${isMe?'me':''}">
+        <div class="val"><b>Stop ${st.stopSeq||'?'}</b> · ${st.consignee||'?'} ${isMe?'← YOUR SCAN':''}</div>
+        <div class="label" style="margin-top:4px">PRO ${st.stopNbr} · Status ${st.stopStatus||'none'} <span class="badge ${m.cls}">${m.label}</span></div>
+        ${st.arrivalDTTM ? `<div class="label">Arrived: ${st.arrivalDTTM}</div>` : ''}
+        ${st.confirmedDTTM ? `<div class="label">Confirmed: ${st.confirmedDTTM}</div>` : ''}
+        ${st.departureDTTM ? `<div class="label">Departed: ${st.departureDTTM}</div>` : ''}
+      </div>`;
+    });
+    out.innerHTML = html;
+  } catch(e) {
+    out.innerHTML = 'Error: '+e.message;
+  }
+}
+document.getElementById('pro').addEventListener('keypress', e => { if (e.key==='Enter') check(); });
+</script>
+</body>
+</html>
