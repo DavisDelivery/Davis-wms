@@ -217,7 +217,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
     </div>
     <div class="hdr-r">
-      <span class="ver" id="ver">v4.7</span>
+      <span class="ver" id="ver">v4.8</span>
       <div class="hdr-time" id="clock">--:-- --</div>
     </div>
   </div>
@@ -328,7 +328,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
-const APP_VERSION = 'v4.7';
+const APP_VERSION = 'v4.8';
 let scans = [];
 let current = null;
 let camOn = false;
@@ -942,8 +942,8 @@ async function handleScan(code) {
   document.getElementById('products-panel').style.display = 'none';
 
   try {
-    // quick:true skips the slow load info check for instant response
-    const res = await fetch(`${API}/nuvizz-lookup`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pro:code, quick:true})});
+    // Do the FULL check (not quick) - need to catch forgotten freight on every scan
+    const res = await fetch(`${API}/nuvizz-lookup`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pro:code, quick:false})});
     const data = await res.json();
     if (data.error) {
       lastEl.innerHTML = `<span class="scan-code">${code}</span> <span class="scan-error">⚠ ${data.message || 'not found'}</span>`;
@@ -1001,41 +1001,6 @@ async function handleScan(code) {
         }).join('');
       } else {
         document.getElementById('flags-area').innerHTML = '';
-      }
-
-      // Background: do the full load check for forgotten freight flags
-      if (data.loadNbr && data.loadNbr !== '-' && !isAppt) {
-        fetch(`${API}/nuvizz-lookup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pro:data.pro||code, quick:false})})
-          .then(r=>r.json()).then(fullData=>{
-            if (fullData.isForgotten && !fullData.isAppointment) {
-              // Update the scan entry with forgotten status
-              const idx = scans.findIndex(s=>s.pro===(fullData.pro||data.pro));
-              if (idx>=0) {
-                scans[idx].isForgotten = true;
-                scans[idx].flags = fullData.flags;
-                scans[idx].status = 'warehouse';
-                scans[idx].routeDeliveredCount = fullData.routeDeliveredCount;
-                scans[idx].routeOnTruckCount = fullData.routeOnTruckCount;
-                saveCurrentSession();
-                updateStats();
-              }
-              // Only update the visible card if it's still showing this scan
-              const currentPro = document.getElementById('res-pro').textContent.replace('PRO# ','');
-              if (currentPro === (fullData.pro||data.pro)) {
-                document.getElementById('res-hdr').className = 'res-hdr warehouse';
-                document.getElementById('res-st').innerHTML = '⚠ POSSIBLY FORGOTTEN';
-                document.getElementById('res-st').style.color = '';
-                const fFlags = fullData.flags||[];
-                if (fFlags.length>0) {
-                  const FT = {'wrong_day':'📅 Wrong Day','partial_delivery':'📦 Partial Delivery','route_active':'🚚 Route Active','appointment':'🔔 Appt Required'};
-                  document.getElementById('flags-area').innerHTML = fFlags.filter(f=>f.type!=='appointment').map(f => {
-                    const extra = f.deliveredStops ? `<div class="flag-stops">${f.deliveredStops.map(s=>s.consignee||s.stopNbr).join(', ')}</div>` : '';
-                    return `<div class="flag-alert high"><div class="flag-icon high">!</div><div class="flag-text"><strong>${FT[f.type]||f.type}</strong> ${f.message}${extra}</div></div>`;
-                  }).join('');
-                }
-              }
-            }
-          }).catch(()=>{});
       }
 
       const flag = isAppt ? ' 🔔 APPT' : (isForgotten ? ' ⚠ FORGOTTEN' : '');

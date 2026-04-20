@@ -192,6 +192,14 @@ async function tryStopLookup(pro, quick) {
         result.routeDeliveredCount = deliveredStops.length;
         result.routeOnTruckCount = onTruckStops.length;
         result.loadStatus = loadStatus;
+
+        console.log(`[ROUTE] pro:${pro} load:${loadNbr} loadStatus:${loadStatus} totalStops:${stops.length} delivered:${deliveredStops.length} onTruck:${onTruckStops.length}`);
+        // Log every stop's status for diagnosis
+        stops.forEach(ls => {
+          const lsStop = ls.stop || {};
+          const lsExec = ls.stopExecutionInfo || {};
+          console.log(`[ROUTE]   stop ${lsStop.stopNbr}: status=${lsExec.stopStatus||'none'} consignee=${((lsStop.to||{}).address||{}).name||'?'}`);
+        });
       }
     } catch (e) {
       console.log(`[LOAD] Error fetching load ${loadNbr}: ${e.message}`);
