@@ -346,11 +346,52 @@ exports.handler = async (event) => {
   const body=JSON.parse(event.body||'{}');
   const pro=(body.pro||'').trim().toUpperCase();
   const quick = body.quick || false;
+  const debug = body.debug || false;
   if (!pro) return {statusCode:400,headers:H,body:'{"error":"Missing PRO"}'};
 
   if (!USERNAME||!PASSWORD) {
     const r=MOCK[pro]||{error:'not_found',pro,message:'Not in mock data',source:'mock'};
     return {statusCode:200,headers:H,body:JSON.stringify(r)};
+  }
+
+  // Debug mode: return raw stop + load data to diagnose flag issues
+  if (debug) {
+    try {
+      let paddedPro = pro;
+      if (/^\d+$/.test(pro) && !pro.startsWith('00')) paddedPro = '00' + pro;
+      const stopUrl = `${BASE_URL}/stop/info/${encodeURIComponent(paddedPro)}/${encodeURIComponent(COMPANY)}`;
+      const stopRes = await rq(stopUrl, { headers: basicHeader() });
+      const stopData = stopRes.status===200 ? JSON.parse(stopRes.body) : null;
+      const view = stopData ? (stopData.Stop||stopData.stop||stopData) : null;
+      const loadNbr = view ? ((view.load||{}).loadNbr || '') : '';
+      let loadRaw = null;
+      if (loadNbr) {
+        const loadUrl = `${BASE_URL}/load/info/${encodeURIComponent(loadNbr)}/${encodeURIComponent(COMPANY)}`;
+        const loadRes = await rq(loadUrl, { headers: basicHeader() });
+        loadRaw = loadRes.status===200 ? JSON.parse(loadRes.body) : { status: loadRes.status, body: loadRes.body.slice(0,500) };
+      }
+      // Summarize load for quick scan
+      const loadView = loadRaw ? (loadRaw.Load||loadRaw.load||loadRaw) : null;
+      const summary = loadView ? {
+        loadNbr: (loadView.loadHeader||{}).loadNbr,
+        routeName: (loadView.loadHeader||{}).routeName,
+        loadStatus: (loadView.loadExecutionInfo||{}).loadStatus,
+        actualStartDTTM: (loadView.loadExecutionInfo||{}).actualStartDTTM,
+        stops: (loadView.stops||[]).map(ls => ({
+          stopNbr: (ls.stop||{}).stopNbr,
+          stopSeq: (ls.stop||{}).stopSeq,
+          consignee: (((ls.stop||{}).to||{}).address||{}).name,
+          stopStatus: (ls.stopExecutionInfo||{}).stopStatus,
+          exceptionPresent: (ls.stopExecutionInfo||{}).exceptionPresent,
+          arrivalDTTM: ((ls.stopExecutionInfo||{}).to||{}).arrivalDTTM,
+          confirmedDTTM: ((ls.stopExecutionInfo||{}).to||{}).confirmedDTTM,
+          departureDTTM: ((ls.stopExecutionInfo||{}).to||{}).departureDTTM,
+        })),
+      } : null;
+      return {statusCode:200,headers:H,body:JSON.stringify({pro: paddedPro, thisStop: view ? ((view.stop||{}).stopNbr) : null, summary, rawLoad: loadRaw}, null, 2)};
+    } catch(e) {
+      return {statusCode:200,headers:H,body:JSON.stringify({error:'debug_error',message:e.message,stack:e.stack})};
+    }
   }
 
   try { return {statusCode:200,headers:H,body:JSON.stringify(await lookupStop(pro, quick))}; }
