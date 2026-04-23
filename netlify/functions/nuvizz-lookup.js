@@ -163,11 +163,13 @@ async function tryStopLookup(pro, quick) {
           }
         }
 
-        // Load status 30/32/33/40 means truck is dispatched/in-progress
-        // loadStatus codes: 30=Dispatched, 32=Driver Arrived, 33=Driver Initiated, 40=In-Progress
-        const loadInProgress = ['30','32','33','40'].includes(loadStatus);
+        // Load status codes that mean the load is ACTIVE (truck has started moving):
+        // 30=Dispatched, 32=Driver Arrived at Origin, 33=Driver Initiated from Origin, 40=In-Progress
+        // Also 45=Re-Assigned (still active)
+        const loadInProgress = ['30','32','33','40','45'].includes(loadStatus);
 
-        // Flag if route is active and this freight is still in warehouse
+        // Flag if route is active and this freight is still in warehouse (not delivered, not on truck)
+        // Any sign the route has started = this freight is forgotten
         if (result.status !== 'delivered' && result.status !== 'on-truck') {
           if (deliveredStops.length > 0) {
             result.flags = result.flags || [];
@@ -177,13 +179,20 @@ async function tryStopLookup(pro, quick) {
               message: `${deliveredStops.length} other stop(s) on this route already delivered — this freight was forgotten`,
               deliveredStops: deliveredStops.slice(0, 5),
             });
-          } else if (onTruckStops.length > 0 || loadInProgress) {
+          } else if (onTruckStops.length > 0) {
             result.flags = result.flags || [];
             result.flags.push({
               type: 'route_active',
               severity: 'high',
-              message: `Truck is already on the road (${onTruckStops.length} other stops on truck) — this freight was forgotten`,
+              message: `Truck is on the road (${onTruckStops.length} other stops on truck) — this freight was forgotten`,
               deliveredStops: onTruckStops.slice(0, 5),
+            });
+          } else if (loadInProgress) {
+            result.flags = result.flags || [];
+            result.flags.push({
+              type: 'route_active',
+              severity: 'high',
+              message: `Route is active (load status ${loadStatus}) — truck has been dispatched, this freight was forgotten`,
             });
           }
         }
