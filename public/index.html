@@ -1047,26 +1047,37 @@ async function camStart(){
               height:{ideal:1080,min:720},
               aspectRatio:{ideal:16/9},
               focusMode:'continuous',
-              advanced:[{focusMode:'continuous'},{focusMode:'auto'}]
+              advanced:[
+                {focusMode:'continuous'},
+                {focusMode:'auto'},
+                // Prefer back camera sharpness
+                {zoom:1.5},
+              ]
             },
-            area:{ // Wider scan area - don't crop so aggressively
-              top:'10%',
+            area:{
+              top:'15%',
               right:'5%',
               left:'5%',
-              bottom:'10%',
+              bottom:'15%',
             },
           },
           locator:{
-            patchSize:'small', // Better for small/dense barcodes
-            halfSample:true,
+            patchSize:'medium', // Better balance for blurry labels than 'small'
+            halfSample:false,   // Don't downsample — keep full resolution for sharper edges
           },
           numOfWorkers:navigator.hardwareConcurrency||4,
           decoder:{
             readers:['code_128_reader','code_39_reader','i2of5_reader','codabar_reader'],
             multiple:false,
+            debug:{
+              drawBoundingBox:false,
+              showFrequency:false,
+              drawScanline:false,
+              showPattern:false,
+            },
           },
           locate:true,
-          frequency:25,
+          frequency:20, // Slightly slower than 25 to give each frame more processing time
         },(err)=>{if(err){reject(err);return;}resolve();});
       });
 
@@ -1080,18 +1091,43 @@ async function camStart(){
       if(qVid) qVid.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block !important;z-index:1;';
       qContainer.querySelectorAll('canvas').forEach(c=>c.style.display='none');
 
-      // Accept on first good read - 7-digit filter already rejects most misreads
+      // Consensus-based detection: require 2 matching reads in a row for blurry labels
+      // This trades a tiny bit of speed for accuracy on bad labels
+      let pendingCode = null;
+      let pendingCount = 0;
       Quagga.onDetected((result)=>{
         if(!camOn)return;
         const code=result.codeResult.code;
-        if(!isValidPRO(code)) return;
+        if(!isValidPRO(code)) { pendingCode=null; pendingCount=0; return; }
+
         // Check decode quality
         const errors = (result.codeResult.decodedCodes||[])
           .map(d=>d.error).filter(e=>e!==undefined);
         const avgError = errors.length ? errors.reduce((a,b)=>a+b,0)/errors.length : 0;
-        // Relaxed quality threshold - only reject really bad reads
-        if (avgError > 0.25) return;
-        handleScan(code);
+
+        if (avgError < 0.08) {
+          // Very clean read — accept immediately
+          handleScan(code);
+          pendingCode = null;
+          pendingCount = 0;
+        } else if (avgError < 0.3) {
+          // Blurry but plausible — require 2 matches in a row
+          if (code === pendingCode) {
+            pendingCount++;
+            if (pendingCount >= 2) {
+              handleScan(code);
+              pendingCode = null;
+              pendingCount = 0;
+            }
+          } else {
+            pendingCode = code;
+            pendingCount = 1;
+          }
+        } else {
+          // Too blurry — reject
+          pendingCode = null;
+          pendingCount = 0;
+        }
       });
 
       return;
