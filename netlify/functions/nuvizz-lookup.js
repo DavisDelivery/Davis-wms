@@ -163,10 +163,12 @@ async function tryStopLookup(pro, quick) {
           }
         }
 
-        // Load status codes that mean the load is ACTIVE (truck has started moving):
-        // 30=Dispatched, 32=Driver Arrived at Origin, 33=Driver Initiated from Origin, 40=In-Progress
-        // Also 45=Re-Assigned (still active)
-        const loadInProgress = ['30','32','33','40','45'].includes(loadStatus);
+        // Load is active if status is anything other than clearly unstarted (10=Created, 20=Planned)
+        // Catches: 30=Dispatched, 32=Arrived Origin, 33=Initiated, 40=In-Progress, 45=Re-Assigned
+        // Also catches any unknown/unexpected status codes by checking for non-zero statuses
+        const inactiveStatuses = ['','10','20'];
+        const loadInProgress = !inactiveStatuses.includes(loadStatus) && loadStatus !== '';
+        console.log(`[ROUTE] pro:${pro} loadStatus:"${loadStatus}" inProgress:${loadInProgress} delivered:${deliveredStops.length} onTruck:${onTruckStops.length}`);
 
         // Flag if route is active and this freight is still in warehouse (not delivered, not on truck)
         // Any sign the route has started = this freight is forgotten
@@ -199,6 +201,8 @@ async function tryStopLookup(pro, quick) {
 
         result.routeStopCount = stops.length;
         result.routeDeliveredCount = deliveredStops.length;
+        result.loadStatusCode = loadStatus;
+        result.loadStatusDesc = loadStatusDesc;
         result.routeOnTruckCount = onTruckStops.length;
         result.loadStatus = loadStatus;
 
@@ -245,10 +249,24 @@ async function getLoadInfo(loadNbr) {
   if (res.status !== 200) return { error: true, status: res.status };
   const data = JSON.parse(res.body);
   const view = data.Load || data.load || data;
+  const loadExec = view.loadExecutionInfo || {};
+  const loadStatus = loadExec.loadStatus || loadExec.status || '';
+  const loadStatusDesc = loadExec.loadStatusDesc || loadExec.statusDesc || '';
+
+  // Log everything so we can see exactly what NuVizz returns
+  console.log(`[LOAD-STATUS] loadNbr:${loadNbr} status:"${loadStatus}" desc:"${loadStatusDesc}"`);
+  console.log(`[LOAD-STATUS] loadExec keys:`, Object.keys(loadExec).join(','));
+  const stopStatuses = (view.stops||[]).map(s=>{
+    const e = s.stopExecutionInfo||{};
+    return `${(s.stop||{}).stopNbr||'?'}:${e.stopStatus||'?'}`;
+  }).join(' ');
+  console.log(`[LOAD-STATUS] stops: ${stopStatuses}`);
+
   return {
     loadNbr: (view.loadHeader || {}).loadNbr || loadNbr,
     stops: view.stops || [],
-    loadStatus: ((view.loadExecutionInfo || {}).loadStatus) || '',
+    loadStatus,
+    loadStatusDesc,
   };
 }
 
