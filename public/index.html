@@ -72,8 +72,8 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .scan-last .scan-code{color:var(--accent);font-size:14px;letter-spacing:1px}
 .scan-last .scan-result{color:var(--ok);font-size:11px}
 .scan-last .scan-error{color:var(--danger);font-size:11px}
-.scan-flash{position:absolute;inset:0;background:rgba(45,158,95,.35);z-index:10;pointer-events:none;animation:flashGreen .4s ease-out forwards}
-@keyframes flashGreen{0%{opacity:1}100%{opacity:0}}
+.scan-flash{position:absolute;inset:0;background:rgba(39,174,96,.65);z-index:10;pointer-events:none;animation:flashGreen .5s ease-out forwards;border:4px solid #2ecc71}
+@keyframes flashGreen{0%{opacity:1;transform:scale(1)}60%{opacity:.8}100%{opacity:0;transform:scale(1)}}
 
 /* ── INPUTS ── */
 .row{display:flex;gap:8px}
@@ -458,9 +458,6 @@ async function lookup(proOverride){
   const inp=document.getElementById('pro-in');
   const pro=(proOverride||inp.value).trim().toUpperCase();
   if(!pro){inp.focus();return}
-
-  // Check if already scanned
-  if(scans.find(s=>s.pro===pro)){toast('Already scanned: '+pro);return}
 
   const btn=document.getElementById('lookup-btn');
   btn.innerHTML='<span class="spinner"></span>';
@@ -1063,8 +1060,8 @@ async function handleScan(code) {
   lastScanTime = now;
 
   if (scans.find(s => s.pro === code || s.pro === code.padStart(9, '0'))) {
-    document.getElementById('scan-last').innerHTML = `<span class="scan-code">${code}</span> <span style="color:var(--accent)">already scanned</span>`;
-    return;
+    // Allow duplicate — multipiece orders need every skid logged
+    // Just reset the debounce so same label can't fire twice in 3 seconds
   }
 
   scanCount++;
@@ -1112,12 +1109,10 @@ async function handleScan(code) {
     } else {
       const entry = {pro:code, ...data, ts:new Date().toISOString(), time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
       if (data.pro) entry.pro = data.pro;
-      if (!scans.find(s => s.pro === entry.pro)) {
-        scans.push(entry);
-        saveCurrentSession();
-        updateStats();
-        fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
-      }
+      scans.push(entry);
+      saveCurrentSession();
+      updateStats();
+      fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
       // Update the card inline (don't call showResult which can disrupt scanner)
       const isAppt = data.isAppointment;
       const isForgotten = data.isForgotten;
