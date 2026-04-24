@@ -250,20 +250,36 @@ async function tryStopLookup(pro, quick) {
 
 // ── Load Info ────────────────────────────────────────
 async function getLoadInfo(loadNbr) {
+  // Try as-is first
+  const result = await tryLoadFetch(loadNbr);
+  if (!result.error) return result;
+
+  // If 400, the loadNbr might have a company prefix like "DAVIS000193148"
+  // Try stripping the alpha prefix → "000193148"
+  const numericOnly = loadNbr.replace(/^[A-Z]+/i, '');
+  if (numericOnly !== loadNbr && numericOnly.length > 0) {
+    console.log(`[LOAD] 400 on "${loadNbr}", retrying as "${numericOnly}"`);
+    const result2 = await tryLoadFetch(numericOnly);
+    if (!result2.error) return result2;
+  }
+
+  return { error: true, status: result.status };
+}
+
+async function tryLoadFetch(loadNbr) {
   const url = `${BASE_URL}/load/info/${encodeURIComponent(loadNbr)}/${encodeURIComponent(COMPANY)}`;
-  console.log(`[LOAD] ${url}`);
+  console.log(`[LOAD] GET ${url}`);
   const res = await rq(url, { headers: basicHeader() });
-  console.log(`[LOAD] ${res.status}`);
+  console.log(`[LOAD] ${res.status} loadNbr:${loadNbr}`);
   if (res.status !== 200) return { error: true, status: res.status };
+
   const data = JSON.parse(res.body);
   const view = data.Load || data.load || data;
   const loadExec = view.loadExecutionInfo || {};
   const loadStatus = loadExec.loadStatus || loadExec.status || '';
   const loadStatusDesc = loadExec.loadStatusDesc || loadExec.statusDesc || '';
 
-  // Log everything so we can see exactly what NuVizz returns
   console.log(`[LOAD-STATUS] loadNbr:${loadNbr} status:"${loadStatus}" desc:"${loadStatusDesc}"`);
-  console.log(`[LOAD-STATUS] loadExec keys:`, Object.keys(loadExec).join(','));
   const stopStatuses = (view.stops||[]).map(s=>{
     const e = s.stopExecutionInfo||{};
     return `${(s.stop||{}).stopNbr||'?'}:${e.stopStatus||'?'}`;
