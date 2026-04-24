@@ -119,6 +119,7 @@ async function tryStopLookup(pro, quick) {
   // ── Flag 2 & 3: Route-level checks (load info) ──
   // Skip in quick mode (scanner) for instant response
   const loadNbr = result.loadNbr;
+  console.log(`[ROUTE] pro:${pro} quick:${quick} loadNbr:${loadNbr} stopStatus:${result.stopStatusCode} status:${result.status}`);
   if (!quick && loadNbr && loadNbr !== '-') {
     try {
       const loadData = await getLoadInfo(loadNbr);
@@ -126,6 +127,13 @@ async function tryStopLookup(pro, quick) {
         const stops = loadData.stops || [];
         const thisStopNbr = result.stopNbr || pro;
         const loadStatus = loadData.loadStatus || '';
+        console.log(`[ROUTE] loadStatus:${loadStatus} totalStops:${stops.length} thisStopNbr:${thisStopNbr}`);
+        stops.forEach(ls => {
+          const lsStop = ls.stop || {};
+          const lsExec = ls.stopExecutionInfo || {};
+          const lsAddr = ((lsStop.to||{}).address||{});
+          console.log(`[STOP] ${lsStop.stopNbr||'?'} status:${lsExec.stopStatus||'?'} name:${lsAddr.name||'?'}`);
+        });
 
         // Flag 2: Check if any part of this stop has been delivered (multipiece)
         const exec = ((data.Stop || data.stop || data).stopExecutionInfo || {});
