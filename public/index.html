@@ -144,6 +144,16 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 .empty{text-align:center;padding:38px 16px;color:var(--muted);font-size:14px}
 .empty-icon{font-size:34px;margin-bottom:10px;opacity:.4}
 .scan-item{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-bottom:7px;display:flex;align-items:center;gap:9px}
+.scan-item.expandable{cursor:pointer;user-select:none;margin-bottom:0;border-radius:var(--radius) var(--radius) 0 0}
+.scan-item.expandable.collapsed{border-radius:var(--radius);margin-bottom:7px}
+.scan-item.expandable:active{background:var(--blue-lt)}
+.scan-detail{background:var(--card2);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:12px 14px;margin-bottom:7px}
+.sd-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-bottom:8px}
+.sd-field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:1px}
+.sd-field .val{font-weight:600;color:var(--text);font-size:13px;line-height:1.3}
+.sd-full{grid-column:1/-1}
+.sd-actions{display:flex;gap:8px;margin-top:8px}
+.sd-del{background:none;border:1px solid var(--danger);color:var(--danger);font-size:11px;padding:5px 12px;border-radius:6px;cursor:pointer;font-weight:600}
 .si-l{flex:1;min-width:0}
 .si-pro{font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px}
 .si-sub{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -621,18 +631,22 @@ function renderLog(){
   const el=document.getElementById('log-list');
   if(!scans.length){el.innerHTML='<div class="empty"><div class="empty-icon">📦</div>No scans yet — start scanning.</div>';}
   else {
-    el.innerHTML=scans.slice().reverse().map(s=>{
+    el.innerHTML=scans.slice().reverse().map((s,i)=>{
+      const idx = scans.length - 1 - i; // real index in scans array
       const isAppt = s.isAppointment || s.status === 'appointment';
+      const isForgotten = s.isForgotten;
       const map = isAppt ? {cls:'on-truck',label:'🔔 Appt'} : (STATUS[s.status]||STATUS.unknown);
-      const label = isAppt ? 'Appt' : map.label.replace(/^[✓●⚠◎✕—?]\s*/,'');
-      return `<div class="scan-item">
+      const pillCls = isForgotten ? 'warehouse' : (isAppt ? 'on-truck' : map.cls);
+      const pillLbl = isForgotten ? '⚠ Forgotten' : (isAppt ? '🔔 Appt' : map.label.replace(/^[✓●⚠◎✕—?]\s*/,''));
+      return `<div class="scan-item expandable" onclick="toggleScanDetail(this, ${idx})">
         <div class="si-l">
           <div class="si-pro">PRO# ${s.pro}</div>
           <div class="si-sub">${s.driver||'—'} · ${s.consignee||'—'} · ${s.weight||''}</div>
         </div>
-        <div class="pill ${isAppt ? 'on-truck' : map.cls}">${label}</div>
+        <div class="pill ${pillCls}">${pillLbl}</div>
         <div class="si-time">${s.time||''}</div>
-      </div>`;
+      </div>
+      <div class="scan-detail" id="sd-${idx}" style="display:none"></div>`;
     }).join('');
   }
 
@@ -948,6 +962,60 @@ function exportPDF(scanData){
   toast('PDF ready — use Save as PDF in print dialog');
 }
 
+// ── Scan Item Detail Expand ────────────────────
+function toggleScanDetail(row, idx) {
+  const panel = document.getElementById('sd-'+idx);
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  document.querySelectorAll('.scan-detail').forEach(p=>p.style.display='none');
+  document.querySelectorAll('.scan-item.expandable').forEach(r=>r.classList.add('collapsed'));
+  if (isOpen) { row.classList.add('collapsed'); return; }
+
+  const s = scans[idx];
+  if (!s) return;
+  const isAppt = s.isAppointment || s.status==='appointment';
+  const isForgotten = s.isForgotten;
+  const flags = s.flags || [];
+
+  let flagsHtml = '';
+  if (isAppt) flagsHtml += `<div class="flag-alert appt" style="padding:7px 10px;margin-bottom:4px"><div class="flag-icon appt" style="width:22px;height:22px;font-size:11px">🔔</div><div class="flag-text"><strong>Appointment Required</strong>${s.apptNote?'<br><span style="font-size:11px">'+s.apptNote+'</span>':''}</div></div>`;
+  if (isForgotten) flagsHtml += `<div class="flag-alert high" style="padding:7px 10px;margin-bottom:4px"><div class="flag-icon high" style="width:22px;height:22px;font-size:11px">!</div><div class="flag-text"><strong>Possibly Forgotten</strong></div></div>`;
+  flags.filter(f=>f.type!=='appointment').forEach(f=>{
+    const titles={'wrong_day':'📅 Wrong Day','partial_delivery':'📦 Partial Delivery','route_active':'🚚 Route Active'};
+    flagsHtml+=`<div class="flag-alert high" style="padding:7px 10px;margin-bottom:4px"><div class="flag-icon high" style="width:22px;height:22px;font-size:11px">!</div><div class="flag-text"><strong>${titles[f.type]||f.type}</strong> ${f.message||''}</div></div>`;
+  });
+
+  panel.innerHTML = `
+    <div class="sd-grid">
+      <div class="sd-field"><label>Driver</label><div class="val">${s.driver||'—'}</div></div>
+      <div class="sd-field"><label>Route / Load</label><div class="val">${s.route||s.loadNbr||'—'}</div></div>
+      <div class="sd-field"><label>Consignee</label><div class="val">${s.consignee||'—'}</div></div>
+      <div class="sd-field"><label>Stop #</label><div class="val">${s.stop||'—'}</div></div>
+      <div class="sd-field sd-full"><label>Address</label><div class="val">${s.fullAddress||s.address||'—'}</div></div>
+      <div class="sd-field"><label>Weight</label><div class="val">${s.weight||'—'}</div></div>
+      <div class="sd-field"><label>Pallets / Ctns</label><div class="val">${[s.pallets,s.cartons].filter(v=>v&&v!=='-').join(' / ')||'—'}</div></div>
+      <div class="sd-field"><label>Requested Date</label><div class="val" style="${s.requestedDate&&s.requestedDate!==new Date().toISOString().split('T')[0]?'color:var(--purple);font-weight:700':''}">${s.requestedDateFormatted||'—'}</div></div>
+      <div class="sd-field"><label>Delivered At</label><div class="val">${s.deliveredAt||'—'}</div></div>
+      <div class="sd-field"><label>Seal #</label><div class="val">${s.sealNbr||'—'}</div></div>
+      <div class="sd-field"><label>Scanned At</label><div class="val">${s.time||'—'}</div></div>
+    </div>
+    ${flagsHtml?'<div style="margin-bottom:4px">'+flagsHtml+'</div>':''}
+    <div class="sd-actions">
+      <button class="sd-del" onclick="deleteScan(${idx});event.stopPropagation()">🗑 Delete This Scan</button>
+    </div>`;
+
+  panel.style.display='block';
+  row.classList.remove('collapsed');
+}
+
+function deleteScan(idx) {
+  if (!confirm('Remove this scan from the log?')) return;
+  scans.splice(idx, 1);
+  saveCurrentSession();
+  updateStats();
+  renderLog();
+  toast('Scan removed');
+}
 
 function toggleProducts() {
   const panel = document.getElementById('products-panel');
