@@ -483,6 +483,12 @@ async function lookup(proOverride){
       showResult(pro,{...data,status:data.status||'unknown',_debug:data});
     } else {
       showResult(pro,data);
+      // Auto-log manual lookups to the session, just like scanner does
+      const entry = {pro:data.pro||pro, ...data, ts:new Date().toISOString(), time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+      scans.push(entry);
+      saveCurrentSession();
+      updateStats();
+      fetch(`${API}/log-scan`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scan:entry})}).catch(()=>{});
     }
   }catch(e){
     showResult(pro,{error:'network',message:'Network error: '+e.message,status:'unknown'});
