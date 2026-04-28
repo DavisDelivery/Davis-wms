@@ -960,12 +960,30 @@ function exportPDF(scanData){
 </body>
 </html>`;
 
-  // Open in new window and trigger print-to-PDF
-  const win = window.open('','_blank');
-  win.document.write(html);
-  win.document.close();
-  win.onload = () => { win.focus(); win.print(); };
-  toast('PDF ready — use Save as PDF in print dialog');
+  // Try popup window first (works on desktop)
+  let win = null;
+  try { win = window.open('','_blank'); } catch(e) { win = null; }
+  
+  if (win && !win.closed) {
+    // Desktop / popup-allowed: write HTML and trigger print dialog
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => { try { win.focus(); win.print(); } catch(e){} };
+    toast('PDF ready — use Save as PDF in print dialog');
+  } else {
+    // Mobile / popup-blocked: build a Blob and trigger native share/download
+    const blob = new Blob([html], {type:'text/html'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.replace('.pdf','.html');
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    toast('Report opened — tap share → Save to Files / Print to PDF');
+  }
 }
 
 // ── Scan Item Detail Expand ────────────────────
@@ -1079,6 +1097,8 @@ function viewPastSession(idx) {
   const history = getSessionHistory();
   if (!history[idx]) return;
   const h = history[idx];
+  // Stash for the PDF button to use without trying to embed JSON in onclick
+  window._viewingPastSession = h.scans || [];
   const d = new Date(h.sessionStart);
   const dateStr = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
   const timeStr = d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -1093,7 +1113,7 @@ function viewPastSession(idx) {
       <div style="font-size:12px;color:var(--muted)">${h.scanCount} scans${forgotten?' · '+forgotten+' forgotten':''}${appts?' · '+appts+' appt':''}</div>
     </div>
     <div style="display:flex;gap:6px">
-      <button class="btn-sm" style="background:var(--blue);color:#fff" onclick="exportPDF(${JSON.stringify(h.scans||[]).replace(/'/g,'&#39;')})">📄 PDF</button>
+      <button class="btn-sm" style="background:var(--blue);color:#fff" onclick="exportPDF(window._viewingPastSession)">📄 PDF</button>
       <button class="btn-sm" onclick="renderLog()">← Back</button>
     </div>
   </div>` +
