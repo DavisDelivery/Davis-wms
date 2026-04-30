@@ -313,8 +313,9 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
     <div class="log-top">
       <div class="log-title">Session Scan Log</div>
       <div class="log-actions">
-        <button class="btn-sm" onclick="exportCSV()">Export CSV</button>
-        <button class="btn-sm" style="background:var(--blue-lt);color:var(--blue)" onclick="newSession()">+ New Session</button>
+        <button class="btn-sm" style="background:var(--blue);color:#fff" onclick="exportPDF()">📄 PDF</button>
+        <button class="btn-sm" onclick="exportCSV()">CSV</button>
+        <button class="btn-sm" style="background:var(--blue-lt);color:var(--blue)" onclick="newSession()">+ New</button>
         <button class="btn-sm" style="background:#fdf0f0;color:var(--danger)" onclick="clearCurrentSession()">🗑 Clear</button>
       </div>
     </div>
