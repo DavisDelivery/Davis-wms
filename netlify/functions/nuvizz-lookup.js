@@ -135,12 +135,64 @@ async function tryStopLookup(pro, quick) {
           console.log(`[STOP] ${lsStop.stopNbr||'?'} status:${lsExec.stopStatus||'?'} name:${lsAddr.name||'?'}`);
         });
 
-        // Flag 2: Check if any part of this stop has been delivered (multipiece)
+        // Flag 2: Multi-piece partial delivery
+        // Check if this same consignee has OTHER pieces on the load that are 
+        // delivered or on truck while this PRO is still warehouse-side
         const exec = ((data.Stop || data.stop || data).stopExecutionInfo || {});
         const xTo = exec.to || {};
+        const myConsignee = (result.consignee||'').toUpperCase().trim();
+        const myAddress = (result.fullAddress||result.address||'').toUpperCase().trim();
+        
+        // Driver visited THIS stop already (has timestamps) but freight still here
         if (result.status !== 'delivered' && (xTo.confirmedDTTM || xTo.arrivalDTTM || xTo.departureDTTM)) {
           result.flags = result.flags || [];
-          result.flags.push({ type: 'partial_delivery', severity: 'high', message: 'Partial delivery detected — driver visited this stop but freight still here' });
+          result.flags.push({ type: 'partial_delivery', severity: 'high', message: 'Partial delivery — driver visited this stop but freight still in warehouse' });
+        }
+
+        // Check for sibling pieces (same consignee, different PRO) already on truck or delivered
+        if (myConsignee && result.status !== 'delivered' && result.status !== 'on-truck') {
+          const siblingsAhead = [];
+          for (const ls of stops) {
+            const lsStop = ls.stop || {};
+            const lsExec = ls.stopExecutionInfo || {};
+            const lsConsignee = (((lsStop.to||{}).address||{}).name||'').toUpperCase().trim();
+            const lsAddress = [(lsStop.to||{}).address?.addr1, (lsStop.to||{}).address?.city, (lsStop.to||{}).address?.zip].filter(Boolean).join(', ').toUpperCase();
+            const lsStopNbr = lsStop.stopNbr || '';
+            const lsPro = lsStop.proNumber || '';
+            const lsStatus = lsExec.stopStatus || '';
+            
+            // Skip self
+            if (lsStopNbr === thisStopNbr) continue;
+            
+            // Check if same consignee OR same address
+            const sameConsignee = lsConsignee && lsConsignee === myConsignee;
+            const sameAddress = myAddress && lsAddress && (myAddress.includes(lsAddress) || lsAddress.includes(myAddress));
+            if (!sameConsignee && !sameAddress) continue;
+            
+            // This is a sibling piece of the same shipment
+            const isAhead = ['90','91','80','24','27','30','38','50'].includes(lsStatus);
+            const lsTo = lsExec.to || {};
+            const hasTimestamps = lsTo.confirmedDTTM || lsTo.departureDTTM || lsTo.arrivalDTTM;
+            
+            if (isAhead || hasTimestamps) {
+              const statusDesc = ['90','91','80'].includes(lsStatus) ? 'DELIVERED' : 
+                                ['24','27','30','38','50'].includes(lsStatus) ? 'ON TRUCK' : 
+                                'PROCESSED';
+              siblingsAhead.push({ pro: lsPro || lsStopNbr, status: statusDesc, consignee: lsConsignee });
+            }
+          }
+          
+          if (siblingsAhead.length > 0) {
+            result.flags = result.flags || [];
+            const firstSibling = siblingsAhead[0];
+            result.flags.push({
+              type: 'partial_delivery',
+              severity: 'high',
+              message: `Multipiece order — ${siblingsAhead.length} other piece(s) for ${firstSibling.consignee} already ${firstSibling.status.toLowerCase()}. This piece was forgotten.`,
+              siblings: siblingsAhead.slice(0,5),
+            });
+            console.log(`[MULTIPIECE] pro:${pro} consignee:${myConsignee} ${siblingsAhead.length} siblings ahead`);
+          }
         }
 
         // Flag 3: Check if ANY other stop on this route has been delivered OR is on truck
