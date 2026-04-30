@@ -220,15 +220,6 @@ async function tryStopLookup(pro, quick) {
           }
         }
 
-        // FORCE warehouse status display: if scanned in warehouse, override any "delivered" status
-        // from NuVizz so the user sees "FORGOTTEN" not "DELIVERED" on the card.
-        if (loadStarted && (result.status === 'delivered' || result.status === 'on-truck')) {
-          console.log(`[OVERRIDE] pro:${pro} NuVizz says ${result.status} but scanned in warehouse → forgotten`);
-          result.nuvizzStatusOverride = result.status;
-          result.status = 'warehouse';
-          result.stopStatusCode = '05'; // force "in warehouse"
-        }
-
         result.routeStopCount = stops.length;
         result.routeDeliveredCount = deliveredStops.length;
         result.loadStatusCode = loadStatus;
@@ -246,6 +237,30 @@ async function tryStopLookup(pro, quick) {
       }
     } catch (e) {
       console.log(`[LOAD] Error fetching load ${loadNbr}: ${e.message}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CORE RULE: A scan IS proof the freight is in the warehouse.
+  // If NuVizz says delivered → it's wrong. The freight is here, forgotten.
+  // If NuVizz says on-truck → it's wrong. The freight is here, forgotten.
+  // This applies UNCONDITIONALLY when quick=false (scan or manual lookup).
+  // No need to verify with load info — the scan is the source of truth.
+  // ═══════════════════════════════════════════════════════════════
+  if (!quick && (result.status === 'delivered' || result.status === 'on-truck')) {
+    console.log(`[FORGOTTEN OVERRIDE] pro:${pro} NuVizz says "${result.status}" but freight is in warehouse (just scanned). Flipping to forgotten.`);
+    result.nuvizzStatusOverride = result.status;
+    result.status = 'warehouse';
+    result.stopStatusCode = '05';
+    result.flags = result.flags || [];
+    // Only add the contradiction flag if no route_active flag is already present
+    const hasRouteFlag = result.flags.some(f => f.type === 'route_active');
+    if (!hasRouteFlag) {
+      result.flags.push({
+        type: 'forgotten_contradiction',
+        severity: 'high',
+        message: `NuVizz shows this PRO as ${result.nuvizzStatusOverride}, but it was just scanned in the warehouse. This freight was forgotten.`,
+      });
     }
   }
 
