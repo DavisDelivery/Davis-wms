@@ -127,136 +127,106 @@ async function tryStopLookup(pro, quick) {
         const stops = loadData.stops || [];
         const thisStopNbr = result.stopNbr || pro;
         const loadStatus = loadData.loadStatus || '';
-        console.log(`[ROUTE] loadStatus:${loadStatus} totalStops:${stops.length} thisStopNbr:${thisStopNbr}`);
-        stops.forEach(ls => {
-          const lsStop = ls.stop || {};
-          const lsExec = ls.stopExecutionInfo || {};
-          const lsAddr = ((lsStop.to||{}).address||{});
-          console.log(`[STOP] ${lsStop.stopNbr||'?'} status:${lsExec.stopStatus||'?'} name:${lsAddr.name||'?'}`);
-        });
+        const loadStatusDesc = loadData.loadStatusDesc || '';
 
-        // Flag 2: Multi-piece partial delivery
-        // Check if this same consignee has OTHER pieces on the load that are 
-        // delivered or on truck while this PRO is still warehouse-side
-        const exec = ((data.Stop || data.stop || data).stopExecutionInfo || {});
-        const xTo = exec.to || {};
-        const myConsignee = (result.consignee||'').toUpperCase().trim();
-        const myAddress = (result.fullAddress||result.address||'').toUpperCase().trim();
-        
-        // Driver visited THIS stop already (has timestamps) but freight still here
-        if (result.status !== 'delivered' && (xTo.confirmedDTTM || xTo.arrivalDTTM || xTo.departureDTTM)) {
-          result.flags = result.flags || [];
-          result.flags.push({ type: 'partial_delivery', severity: 'high', message: 'Partial delivery — driver visited this stop but freight still in warehouse' });
-        }
+        // ── CORE RULE ──────────────────────────────────────────
+        // If a PRO is scanned in the warehouse, it IS in the warehouse — 
+        // regardless of what NuVizz says its stop status is.
+        // Drivers sometimes mark stops "delivered" but leave a piece behind.
+        // 
+        // The forgotten test is simple:
+        //   ANY stop on the load completed (delivered/on-truck/visited) → THIS PRO is forgotten
+        //
+        // We don't care about same-consignee matching, or this stop's own status.
+        // The freight is sitting in the warehouse. The truck went out. End of story.
+        // ───────────────────────────────────────────────────────
 
-        // Check for sibling pieces (same consignee, different PRO) already on truck or delivered
-        if (myConsignee && result.status !== 'delivered' && result.status !== 'on-truck') {
-          const siblingsAhead = [];
-          for (const ls of stops) {
-            const lsStop = ls.stop || {};
-            const lsExec = ls.stopExecutionInfo || {};
-            const lsConsignee = (((lsStop.to||{}).address||{}).name||'').toUpperCase().trim();
-            const lsAddress = [(lsStop.to||{}).address?.addr1, (lsStop.to||{}).address?.city, (lsStop.to||{}).address?.zip].filter(Boolean).join(', ').toUpperCase();
-            const lsStopNbr = lsStop.stopNbr || '';
-            const lsPro = lsStop.proNumber || '';
-            const lsStatus = lsExec.stopStatus || '';
-            
-            // Skip self
-            if (lsStopNbr === thisStopNbr) continue;
-            
-            // Check if same consignee OR same address
-            const sameConsignee = lsConsignee && lsConsignee === myConsignee;
-            const sameAddress = myAddress && lsAddress && (myAddress.includes(lsAddress) || lsAddress.includes(myAddress));
-            if (!sameConsignee && !sameAddress) continue;
-            
-            // This is a sibling piece of the same shipment
-            const isAhead = ['90','91','80','24','27','30','38','50'].includes(lsStatus);
-            const lsTo = lsExec.to || {};
-            const hasTimestamps = lsTo.confirmedDTTM || lsTo.departureDTTM || lsTo.arrivalDTTM;
-            
-            if (isAhead || hasTimestamps) {
-              const statusDesc = ['90','91','80'].includes(lsStatus) ? 'DELIVERED' : 
-                                ['24','27','30','38','50'].includes(lsStatus) ? 'ON TRUCK' : 
-                                'PROCESSED';
-              siblingsAhead.push({ pro: lsPro || lsStopNbr, status: statusDesc, consignee: lsConsignee });
-            }
-          }
-          
-          if (siblingsAhead.length > 0) {
-            result.flags = result.flags || [];
-            const firstSibling = siblingsAhead[0];
-            result.flags.push({
-              type: 'partial_delivery',
-              severity: 'high',
-              message: `Multipiece order — ${siblingsAhead.length} other piece(s) for ${firstSibling.consignee} already ${firstSibling.status.toLowerCase()}. This piece was forgotten.`,
-              siblings: siblingsAhead.slice(0,5),
-            });
-            console.log(`[MULTIPIECE] pro:${pro} consignee:${myConsignee} ${siblingsAhead.length} siblings ahead`);
-          }
-        }
-
-        // Flag 3: Check if ANY other stop on this route has been delivered OR is on truck
         const deliveredStops = [];
         const onTruckStops = [];
+        const visitedStops = [];
+
         for (const ls of stops) {
           const lsStop = ls.stop || {};
           const lsExec = ls.stopExecutionInfo || {};
           const lsStopNbr = lsStop.stopNbr || '';
-          if (lsStopNbr === thisStopNbr) continue; // skip self
-          
           const lsStatus = lsExec.stopStatus || '';
           const lsAddr = ((lsStop.to || {}).address || {});
-          // 90/91=Completed, 80=Closed → delivered
-          if (lsStatus === '90' || lsStatus === '91' || lsStatus === '80') {
-            deliveredStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus });
-            continue;
-          }
-          // 24/27/30/38/50 → on truck (truck is moving with this stop on it)
-          if (['24','27','30','38','50'].includes(lsStatus)) {
-            onTruckStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus });
-            continue;
-          }
-          // Also catch delivery timestamps (backup check)
           const lsTo = lsExec.to || {};
-          if (lsTo.confirmedDTTM || lsTo.departureDTTM) {
-            deliveredStops.push({ stopNbr: lsStopNbr, consignee: lsAddr.name || lsStopNbr, status: lsStatus, note: 'has delivery timestamps' });
+          const lsName = lsAddr.name || lsStopNbr;
+
+          // Skip self — but ONLY for the route-active comparison.
+          // We still want to flag forgotten if other stops moved.
+          if (lsStopNbr === thisStopNbr) continue;
+
+          // 90/91=Completed, 80=Closed → delivered
+          if (['90','91','80'].includes(lsStatus)) {
+            deliveredStops.push({ stopNbr: lsStopNbr, consignee: lsName, status: lsStatus });
+            continue;
+          }
+          // 24/27/30/38/50 → on truck (truck loaded and moving)
+          if (['24','27','30','38','50'].includes(lsStatus)) {
+            onTruckStops.push({ stopNbr: lsStopNbr, consignee: lsName, status: lsStatus });
+            continue;
+          }
+          // Stop has delivery timestamps → driver visited even if status not yet updated
+          if (lsTo.confirmedDTTM || lsTo.departureDTTM || lsTo.arrivalDTTM) {
+            visitedStops.push({ stopNbr: lsStopNbr, consignee: lsName, status: lsStatus });
           }
         }
 
-        // Load is active if status is anything other than clearly unstarted (10=Created, 20=Planned)
-        // Catches: 30=Dispatched, 32=Arrived Origin, 33=Initiated, 40=In-Progress, 45=Re-Assigned
-        // Also catches any unknown/unexpected status codes by checking for non-zero statuses
+        // Load is active if any of these are true
         const inactiveStatuses = ['','10','20'];
         const loadInProgress = !inactiveStatuses.includes(loadStatus) && loadStatus !== '';
-        console.log(`[ROUTE] pro:${pro} loadStatus:"${loadStatus}" inProgress:${loadInProgress} delivered:${deliveredStops.length} onTruck:${onTruckStops.length}`);
 
-        // Flag if route is active and this freight is still in warehouse (not delivered, not on truck)
-        // Any sign the route has started = this freight is forgotten
-        if (result.status !== 'delivered' && result.status !== 'on-truck') {
+        const anyMovement = deliveredStops.length > 0 || onTruckStops.length > 0 || visitedStops.length > 0;
+        const loadStarted = anyMovement || loadInProgress;
+
+        console.log(`[ROUTE] pro:${pro} loadStatus:"${loadStatus}" inProgress:${loadInProgress} delivered:${deliveredStops.length} onTruck:${onTruckStops.length} visited:${visitedStops.length}`);
+
+        // ── THE FORGOTTEN RULE ──
+        // Scanned in warehouse + any sign the load moved = FORGOTTEN.
+        // (NuVizz status of THIS stop is irrelevant — if you scanned it, it's here.)
+        if (loadStarted) {
+          result.flags = result.flags || [];
+
           if (deliveredStops.length > 0) {
-            result.flags = result.flags || [];
+            const names = deliveredStops.slice(0,3).map(s=>s.consignee).join(', ');
             result.flags.push({
               type: 'route_active',
               severity: 'high',
-              message: `${deliveredStops.length} other stop(s) on this route already delivered — this freight was forgotten`,
+              message: `${deliveredStops.length} stop(s) on this load already delivered (${names}${deliveredStops.length>3?'…':''}). This freight was forgotten.`,
               deliveredStops: deliveredStops.slice(0, 5),
             });
           } else if (onTruckStops.length > 0) {
-            result.flags = result.flags || [];
             result.flags.push({
               type: 'route_active',
               severity: 'high',
-              message: `Truck is on the road (${onTruckStops.length} other stops on truck) — this freight was forgotten`,
+              message: `Truck is on the road with ${onTruckStops.length} other stop(s). This freight was forgotten.`,
               deliveredStops: onTruckStops.slice(0, 5),
             });
-          } else if (loadInProgress) {
-            result.flags = result.flags || [];
+          } else if (visitedStops.length > 0) {
             result.flags.push({
               type: 'route_active',
               severity: 'high',
-              message: `Route is active (load status ${loadStatus}) — truck has been dispatched, this freight was forgotten`,
+              message: `Driver has visited ${visitedStops.length} other stop(s) on this load. This freight was forgotten.`,
+              deliveredStops: visitedStops.slice(0, 5),
+            });
+          } else if (loadInProgress) {
+            result.flags.push({
+              type: 'route_active',
+              severity: 'high',
+              message: `Load has been dispatched (status ${loadStatus}). This freight was forgotten.`,
             });
           }
+        }
+
+        // FORCE warehouse status display: if scanned in warehouse, override any "delivered" status
+        // from NuVizz so the user sees "FORGOTTEN" not "DELIVERED" on the card.
+        if (loadStarted && (result.status === 'delivered' || result.status === 'on-truck')) {
+          console.log(`[OVERRIDE] pro:${pro} NuVizz says ${result.status} but scanned in warehouse → forgotten`);
+          result.nuvizzStatusOverride = result.status;
+          result.status = 'warehouse';
+          result.stopStatusCode = '05'; // force "in warehouse"
         }
 
         result.routeStopCount = stops.length;
@@ -266,12 +236,12 @@ async function tryStopLookup(pro, quick) {
         result.routeOnTruckCount = onTruckStops.length;
         result.loadStatus = loadStatus;
 
-        console.log(`[ROUTE] pro:${pro} load:${loadNbr} loadStatus:${loadStatus} totalStops:${stops.length} delivered:${deliveredStops.length} onTruck:${onTruckStops.length}`);
-        // Log every stop's status for diagnosis
+        console.log(`[ROUTE] pro:${pro} load:${loadNbr} loadStatus:${loadStatus} totalStops:${stops.length} delivered:${deliveredStops.length} onTruck:${onTruckStops.length} visited:${visitedStops.length}`);
         stops.forEach(ls => {
           const lsStop = ls.stop || {};
           const lsExec = ls.stopExecutionInfo || {};
-          console.log(`[ROUTE]   stop ${lsStop.stopNbr}: status=${lsExec.stopStatus||'none'} consignee=${((lsStop.to||{}).address||{}).name||'?'}`);
+          const lsAddr = ((lsStop.to||{}).address||{});
+          console.log(`[STOP] ${lsStop.stopNbr||'?'} status:${lsExec.stopStatus||'?'} name:${lsAddr.name||'?'}`);
         });
       }
     } catch (e) {
