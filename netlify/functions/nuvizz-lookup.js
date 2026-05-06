@@ -264,6 +264,29 @@ async function tryStopLookup(pro, quick) {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // SECOND OVERRIDE: load is dispatched but stop is "planned" (20).
+  // /load/info is unreliable for many active loads (NuVizz returns 400
+  // even for loads that clearly exist on the stop record). So we can't
+  // depend on the route_active check inside the load block — it silently
+  // skips when the load lookup 400s.
+  //
+  // The stop response itself carries loadStatus directly. Active load
+  // statuses per NuVizz: 30/32/33/40/45 (dispatched, in progress, etc).
+  // If the truck is rolling and the freight is on our floor → forgotten.
+  // ═══════════════════════════════════════════════════════════════
+  const ACTIVE_LOAD_STATUSES = ['30','32','33','40','45'];
+  const hasRouteFlag = (result.flags || []).some(f => f.type === 'route_active');
+  if (!quick && !hasRouteFlag && ACTIVE_LOAD_STATUSES.includes(String(result.loadStatus || ''))) {
+    console.log(`[FORGOTTEN OVERRIDE 2] pro:${pro} stopStatus:${result.stopStatusCode} loadStatus:${result.loadStatus} → load dispatched, freight in warehouse, forgotten.`);
+    result.flags = result.flags || [];
+    result.flags.push({
+      type: 'route_active',
+      severity: 'high',
+      message: `Load is dispatched (status ${result.loadStatus}) — driver ${result.driver || 'unknown'} is on route ${result.route || ''}. This freight was forgotten.`,
+    });
+  }
+
   // Set overall forgotten flag — but NOT if it's an appointment delivery
   // Appointment freight is SUPPOSED to be in the warehouse until its delivery date
   if (result.isAppointment) {

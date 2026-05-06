@@ -1,4 +1,4 @@
-const CACHE = 'davis-wms-v18';
+const CACHE = 'davis-wms-v19';
 const ASSETS = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', e => {
