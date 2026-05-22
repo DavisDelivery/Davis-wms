@@ -313,6 +313,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
     <div class="log-top">
       <div class="log-title">Session Scan Log</div>
       <div class="log-actions">
+        <button class="btn-sm" style="background:#27ae60;color:#fff" onclick="emailSession()">📧 Email</button>
         <button class="btn-sm" style="background:var(--blue);color:#fff" onclick="exportPDF()">📄 PDF</button>
         <button class="btn-sm" onclick="exportCSV()">CSV</button>
         <button class="btn-sm" style="background:var(--blue-lt);color:var(--blue)" onclick="newSession()">+ New</button>
@@ -769,6 +770,7 @@ function renderReport(){
 
   // Export buttons
   html+=`<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button class="btn-act primary" style="flex:1;min-width:120px;background:#27ae60" onclick="emailSession()">📧 Email Report</button>
     <button class="btn-act primary" style="flex:1;min-width:120px" onclick="exportPDF()">📄 Export PDF</button>
     <button class="btn-act secondary" style="flex:1;min-width:120px" onclick="exportCSV()">Export CSV</button>
     <button class="btn-act secondary" style="flex:1;min-width:120px" onclick="exportReport()">Copy Report</button>
@@ -788,6 +790,195 @@ function exportCSV(){
   a.download='davis_warehouse_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
   toast('CSV exported');
+}
+
+// ── Build CSV as Blob (for email/share) ────────
+function buildCSVBlob(scanData){
+  const data = scanData || scans;
+  const cols=['PRO','Stop#','Seal#','Driver','Route','Load#','Consignee','Address','City','State','Zip','Weight','Pallets','Cartons','Delivered At','Status','Status Code','Source','Scanned At'];
+  const rows=data.map(s=>[s.pro,s.stop,s.sealNbr,s.driver,s.route,s.loadNbr,s.consignee,s.address||s.fullAddress,s.city,s.state,s.zip,s.weight,s.pallets,s.cartons,s.deliveredAt,s.status,s.stopStatusCode,s.source,s.time]);
+  const csv=[cols,...rows].map(r=>r.map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+  return new Blob([csv], {type:'text/csv'});
+}
+
+// ── Email Session ──────────────────────────────
+// On iOS, mailto: can't carry attachments. The Web Share API can (it routes
+// through the share sheet which lets the user pick Mail and attach files).
+// Strategy: try navigator.share with files first; if unavailable, fall back to
+// downloading PDF + CSV separately and opening mailto: for the user to attach.
+async function emailSession(scanData){
+  const data = scanData || scans;
+  if(!data.length){toast('No scans to email');return;}
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const dateShort = now.toISOString().slice(0,10);
+  const wh = data.filter(s=>s.isForgotten||s.status==='warehouse'||s.status==='planned');
+  const appts = data.filter(s=>s.isAppointment||s.status==='appointment');
+  const delivered = data.filter(s=>s.status==='delivered');
+  const onTruck = data.filter(s=>s.status==='on-truck');
+
+  const recipient = 'customerservice@davisdelivery.com';
+  const subject = `Davis Warehouse Scan Report — ${dateShort}`;
+  let body = `Davis Delivery — Warehouse Scan Report\n${dateStr}\n\n`;
+  body += `Total Scanned: ${data.length}\n`;
+  body += `In Warehouse / Forgotten: ${wh.length}\n`;
+  body += `Appointments: ${appts.length}\n`;
+  body += `On Truck: ${onTruck.length}\n`;
+  body += `Delivered: ${delivered.length}\n\n`;
+
+  if(wh.length){
+    body += `⚠ POSSIBLY FORGOTTEN:\n`;
+    wh.forEach(s=>{
+      body += `  ${s.pro} — ${s.consignee||'—'} — ${s.driver||'—'} (${s.route||'—'})\n`;
+    });
+    body += '\n';
+  }
+  if(appts.length){
+    body += `🔔 APPOINTMENT REQUIRED:\n`;
+    appts.forEach(s=>{
+      body += `  ${s.pro} — ${s.consignee||'—'} — ${s.driver||'—'} (${s.route||'—'})\n`;
+    });
+    body += '\n';
+  }
+
+  // Build the file blobs
+  const csvBlob = buildCSVBlob(data);
+  const csvFilename = `Davis_WH_Scan_${dateShort}.csv`;
+  const pdfFilename = `Davis_WH_Scan_${dateShort}.pdf`;
+
+  // Build PDF HTML (reuse exportPDF logic, but return blob instead of opening window)
+  const pdfHTML = buildPDFHTML(data);
+  const pdfBlob = new Blob([pdfHTML], {type:'text/html'});
+
+  // Try Web Share API with files (iOS Safari supports this)
+  if(navigator.canShare){
+    const csvFile = new File([csvBlob], csvFilename, {type:'text/csv'});
+    const pdfFile = new File([pdfBlob], pdfFilename.replace('.pdf','.html'), {type:'text/html'});
+    const shareData = {
+      title: subject,
+      text: body,
+      files: [pdfFile, csvFile],
+    };
+    if(navigator.canShare(shareData)){
+      try {
+        await navigator.share(shareData);
+        toast('Choose Mail from the share sheet');
+        return;
+      } catch(e){
+        // User cancelled or share failed — fall through to mailto
+        if(e.name === 'AbortError') return; // user cancelled, do nothing
+      }
+    }
+  }
+
+  // Fallback: download files separately, then open mailto
+  // First: trigger CSV download
+  const csvUrl = URL.createObjectURL(csvBlob);
+  const csvA = document.createElement('a');
+  csvA.href = csvUrl; csvA.download = csvFilename;
+  document.body.appendChild(csvA); csvA.click();
+  setTimeout(()=>{document.body.removeChild(csvA);URL.revokeObjectURL(csvUrl);}, 100);
+
+  // Second: open PDF report
+  setTimeout(()=>{
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+    const pdfA = document.createElement('a');
+    pdfA.href = pdfUrl; pdfA.download = pdfFilename.replace('.pdf','.html');
+    document.body.appendChild(pdfA); pdfA.click();
+    setTimeout(()=>{document.body.removeChild(pdfA);URL.revokeObjectURL(pdfUrl);}, 100);
+  }, 300);
+
+  // Third: open mailto with body + instruction to attach
+  setTimeout(()=>{
+    const noteAtTop = `[ATTACH the PDF and CSV files just downloaded to Files]\n\n`;
+    const mailtoBody = encodeURIComponent(noteAtTop + body);
+    const mailto = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${mailtoBody}`;
+    window.location.href = mailto;
+    toast('Files saved — attach them in Mail');
+  }, 800);
+}
+
+// ── Build PDF HTML (extracted from exportPDF) ──
+function buildPDFHTML(scanData){
+  const data = scanData || scans;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const timeStr = now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+  const wh = data.filter(s=>s.isForgotten||(s.status==='warehouse'||s.status==='planned'));
+  const appts = data.filter(s=>s.isAppointment||s.status==='appointment');
+  const delivered = data.filter(s=>s.status==='delivered');
+  const onTruck = data.filter(s=>s.status==='on-truck');
+
+  const statusColor = s => {
+    if(s.isAppointment||s.status==='appointment') return '#b37d00';
+    if(s.isForgotten) return '#c0392b';
+    if(s.status==='delivered') return '#27ae60';
+    if(s.status==='on-truck') return '#e67e22';
+    return '#555';
+  };
+  const statusLabel = s => {
+    if(s.isAppointment||s.status==='appointment') return '🔔 APPT';
+    if(s.isForgotten) return '⚠ FORGOTTEN';
+    if(s.status==='delivered') return '✓ DELIVERED';
+    if(s.status==='on-truck') return '● ON TRUCK';
+    if(s.status==='planned') return '◎ PLANNED';
+    return s.status?.toUpperCase()||'—';
+  };
+
+  const rows = data.map((s,i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td><strong style="color:#0066cc">${s.pro||'—'}</strong></td>
+      <td style="color:${statusColor(s)};font-weight:600">${statusLabel(s)}</td>
+      <td>${s.consignee||'—'}</td>
+      <td>${[s.address,s.city,s.state,s.zip].filter(Boolean).join(', ')||'—'}</td>
+      <td>${s.driver||'—'}</td>
+      <td>${s.route||'—'}</td>
+      <td>${s.weight?s.weight+' lbs':'—'}</td>
+      <td>${s.pallets||'—'}/${s.cartons||'—'}</td>
+      <td>${s.deliveredAt||'—'}</td>
+      <td>${s.time||'—'}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Davis WH Scan ${now.toISOString().slice(0,10)}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:20px;color:#222}
+h1{margin:0 0 4px;color:#0066cc;font-size:22px}
+.sub{color:#666;font-size:13px;margin-bottom:14px}
+.tag{display:inline-block;font-size:11px;color:#777;margin-bottom:14px}
+.summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.box{padding:10px 14px;border:1px solid #ddd;border-radius:6px;min-width:90px}
+.box .l{font-size:11px;color:#777;text-transform:uppercase;letter-spacing:.5px}
+.box .v{font-size:22px;font-weight:700;margin-top:2px}
+.box.red{border-color:#f5b7b1;background:#fdf2f0}.box.red .v{color:#c0392b}
+.box.yellow{border-color:#f5d896;background:#fff8e1}.box.yellow .v{color:#b37d00}
+.box.green{border-color:#a9dfbf;background:#eafaf1}.box.green .v{color:#27ae60}
+.box.orange{border-color:#f8c799;background:#fef3e8}.box.orange .v{color:#e67e22}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{background:#f4f4f4;text-align:left;padding:6px 8px;border:1px solid #ddd;font-weight:600}
+td{padding:5px 8px;border:1px solid #e5e5e5;vertical-align:top}
+tr:nth-child(even) td{background:#fafafa}
+.footer{margin-top:16px;font-size:10px;color:#999;text-align:center}
+@media print{body{margin:8mm}.no-print{display:none}}
+</style></head><body>
+<h1>Davis Delivery — Warehouse Scan Report</h1>
+<div class="sub">${dateStr} · ${timeStr}</div>
+<div class="tag">Family Owned Since 1985</div>
+<div class="summary">
+  <div class="box"><div class="l">Total</div><div class="v">${data.length}</div></div>
+  <div class="box red"><div class="l">Forgotten</div><div class="v">${wh.length}</div></div>
+  <div class="box yellow"><div class="l">Appt</div><div class="v">${appts.length}</div></div>
+  <div class="box green"><div class="l">Delivered</div><div class="v">${delivered.length}</div></div>
+  <div class="box orange"><div class="l">On Truck</div><div class="v">${onTruck.length}</div></div>
+</div>
+<table>
+<thead><tr><th>#</th><th>PRO#</th><th>Status</th><th>Consignee</th><th>Address</th><th>Driver</th><th>Route</th><th>Weight</th><th>Plt/Ctn</th><th>Delivered</th><th>Scanned</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>
+<div class="footer">Davis Delivery Service · Warehouse Scan Report · ${now.toISOString()}</div>
+</body></html>`;
 }
 
 // ── Export Report Text ─────────────────────────
@@ -1114,6 +1305,7 @@ function viewPastSession(idx) {
       <div style="font-size:12px;color:var(--muted)">${h.scanCount} scans${forgotten?' · '+forgotten+' forgotten':''}${appts?' · '+appts+' appt':''}</div>
     </div>
     <div style="display:flex;gap:6px">
+      <button class="btn-sm" style="background:#27ae60;color:#fff" onclick="emailSession(window._viewingPastSession)">📧 Email</button>
       <button class="btn-sm" style="background:var(--blue);color:#fff" onclick="exportPDF(window._viewingPastSession)">📄 PDF</button>
       <button class="btn-sm" onclick="renderLog()">← Back</button>
     </div>
