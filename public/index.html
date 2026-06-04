@@ -227,7 +227,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
       <h1>Davis Delivery<small>Warehouse Scanner</small></h1>
     </div>
     <div class="hdr-r">
-      <span class="ver" id="ver">v4.19</span>
+      <span class="ver" id="ver">v4.20</span>
       <div class="hdr-time" id="clock">--:-- --</div>
     </div>
   </div>
@@ -341,7 +341,7 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
-const APP_VERSION = 'v4.19';
+const APP_VERSION = 'v4.20';
 let scans = [];
 let current = null;
 let camOn = false;
@@ -1468,6 +1468,89 @@ async function camStart(){
   msg.textContent='Starting camera...';
   scanCount = 0;
 
+  // ── Decide scanner engine by capability ──────────────────────
+  // Android Chrome has a native BarcodeDetector (ML Kit) that vastly
+  // outperforms Quagga2. iOS Safari has NO BarcodeDetector, so it uses
+  // Quagga2. Previously Quagga always won because the library loads on
+  // every device — starving Android of the better native detector.
+  let nativeOK = false;
+  if ('BarcodeDetector' in window) {
+    try {
+      const fmts = await BarcodeDetector.getSupportedFormats();
+      if (fmts && fmts.includes('code_128')) nativeOK = true;
+    } catch(_) { nativeOK = false; }
+  }
+
+  // ── NATIVE PATH (Android Chrome, desktop Chrome) ─────────────
+  if (nativeOK) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video:{
+          facingMode:{ideal:'environment'},
+          width:{ideal:1920},
+          height:{ideal:1080},
+        }
+      });
+      vid.srcObject = stream;
+      vid.setAttribute('playsinline','');
+      vid.playsInline = true; vid.muted = true;
+      vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;';
+      await vid.play();
+
+      // Android autofocus + slight zoom — the real reason close labels wouldn't lock.
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const adv = [];
+        if (caps.focusMode && caps.focusMode.includes('continuous')) adv.push({focusMode:'continuous'});
+        if (caps.zoom && typeof caps.zoom.max === 'number') {
+          // Modest zoom helps frame a single PRO barcode up close
+          const z = Math.min(caps.zoom.max, Math.max(caps.zoom.min||1, 1.8));
+          adv.push({zoom:z});
+        }
+        if (adv.length) await track.applyConstraints({advanced:adv});
+      } catch(_) {}
+
+      camOn=true;
+      stopBtn.style.display='block';
+      document.getElementById('cam-ui').style.display='none';
+      document.getElementById('scan-overlay').style.display='';
+      msg.textContent='';
+
+      const detector = new BarcodeDetector({formats:['code_128','code_39','itf','codabar','ean_13','upc_a']});
+      let busy = false;
+      const scanFrame = async () => {
+        if(!camOn){return;}
+        if(!busy && vid.readyState >= 2){
+          busy = true;
+          try{
+            const codes = await detector.detect(vid);
+            for(const bc of codes){
+              if(isValidPRO(bc.rawValue)){ handleScan(bc.rawValue); break; }
+            }
+          }catch(_){}
+          busy = false;
+        }
+        if(camOn){
+          if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+            vid.requestVideoFrameCallback(scanFrame);
+          }
+        }
+      };
+      if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+        vid.requestVideoFrameCallback(scanFrame);
+      }else{
+        // Fallback: fast interval (~6-7 fps), snappier than the old 250ms
+        scanInterval = setInterval(scanFrame, 150);
+      }
+      return;
+    } catch(e) {
+      console.error('[NATIVE-SCAN]', e);
+      // fall through to Quagga if native camera failed
+    }
+  }
+
+  // ── QUAGGA2 PATH (iOS Safari — no native BarcodeDetector) ────
   if(window.Quagga){
     try{
       let qContainer=document.getElementById('quagga-container');
@@ -1547,37 +1630,8 @@ async function camStart(){
     }
   }
 
-  // Fallback: native BarcodeDetector
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}
-    });
-    vid.srcObject=stream;vid.style.display='block';
-    await vid.play();
-    camOn=true;stopBtn.style.display='block';
-    document.getElementById('cam-ui').style.display='none';
-    document.getElementById('scan-overlay').style.display='';
-
-    if('BarcodeDetector' in window){
-      const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','itf','codabar','upc_a']});
-      scanInterval=setInterval(async()=>{
-        if(!camOn||vid.readyState<2)return;
-        try{
-          const barcodes=await detector.detect(vid);
-          for(const bc of barcodes){
-            if(isValidPRO(bc.rawValue)){
-              handleScan(bc.rawValue);
-              break;
-            }
-          }
-        }catch(e){}
-      },250);
-    }else{
-      msg.textContent='No scanner — type PRO below';
-    }
-  }catch(e){
-    msg.textContent='Camera blocked — use manual entry';st.textContent='';camOn=false;
-  }
+  // ── No scanner available ─────────────────────────────────────
+  msg.textContent='No scanner — type PRO below';
 }
 
 function camStop(e){
