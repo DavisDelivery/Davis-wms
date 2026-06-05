@@ -784,13 +784,14 @@ function renderReport(){
 // ── Export CSV ─────────────────────────────────
 function exportCSV(){
   if(!scans.length)return;
-  const cols=['PRO','Stop#','Seal#','Driver','Route','Load#','Consignee','Address','City','State','Zip','Weight','Pallets','Cartons','Delivered At','Status','Status Code','Source','Scanned At'];
-  const rows=scans.map(s=>[s.pro,s.stop,s.sealNbr,s.driver,s.route,s.loadNbr,s.consignee,s.address||s.fullAddress,s.city,s.state,s.zip,s.weight,s.pallets,s.cartons,s.deliveredAt,s.status,s.stopStatusCode,s.source,s.time]);
-  const csv=[cols,...rows].map(r=>r.map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+  // Reuse the load-grouped CSV builder so the exported file matches the email
+  const blob=buildCSVBlob(scans);
+  const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
-  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.href=url;
   a.download='davis_warehouse_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),100);
   toast('CSV exported');
 }
 
@@ -1144,8 +1145,16 @@ function exportPDF(scanData){
     return s.status?.toUpperCase()||'—';
   };
 
-  const rows = data.map((s,i) => `
-    <tr style="background:${i%2===0?'#fff':'#f8f9fb'}">
+  // Group orders by load (report output only — the live scan list is untouched)
+  const _grp = groupByLoad(data);
+  let _row = 0;
+  let rows = '';
+  _grp.forEach((items, load) => {
+    const loadLabel = (load && load !== '—') ? load : 'No Load #';
+    rows += `<tr><td colspan="11" style="padding:8px 10px;background:#1a3a6b;color:#fff;font-weight:700;font-size:12px;letter-spacing:.3px">LOAD ${loadLabel} — ${items.length} order${items.length===1?'':'s'}</td></tr>`;
+    items.forEach(s => {
+      rows += `
+    <tr style="background:${_row++%2===0?'#fff':'#f8f9fb'}">
       <td style="padding:6px 8px;font-weight:600;white-space:nowrap">${s.pro||'—'}</td>
       <td style="padding:6px 8px">${s.consignee||'—'}</td>
       <td style="padding:6px 8px;font-size:11px;color:#555">${s.fullAddress||s.address||'—'}</td>
@@ -1157,7 +1166,9 @@ function exportPDF(scanData){
       <td style="padding:6px 8px;white-space:nowrap">${s.requestedDateFormatted||'—'}</td>
       <td style="padding:6px 8px;font-weight:700;white-space:nowrap;color:${statusColor(s)}">${statusLabel(s)}</td>
       <td style="padding:6px 8px;color:#777;font-size:11px">${s.time||'—'}</td>
-    </tr>`).join('');
+    </tr>`;
+    });
+  });
 
   const html = `<!DOCTYPE html>
 <html>
