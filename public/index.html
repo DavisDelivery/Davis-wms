@@ -339,6 +339,8 @@ body{font-family:'Barlow',sans-serif;background:var(--bg);color:var(--text);min-
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <script>
 // ── State ──────────────────────────────────────
 const APP_VERSION = 'v4.20';
@@ -832,68 +834,69 @@ async function emailSession(scanData){
   if(!data.length){toast('No scans to email');return;}
 
   const now = new Date();
-  const dateShort = now.toISOString().slice(0,10);
+  const dateLong = now.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}); // e.g. June 5, 2026
 
   const recipient = 'customerservice@davisdelivery.com';
-  const title = `Forgotten Freight Log ${dateShort}`;
+  const title = `Forgotten Freight Log ${dateLong}`;
   const subject = title;
-  // Scan contents are delivered as the attached PDF/CSV — keep the body empty.
+  // Scan contents ride in the attached PDF/CSV — keep the body empty.
   const body = '';
 
   // Build the file blobs (grouped by load, titled "Forgotten Freight Log <date>")
   const csvBlob = buildCSVBlob(data);
   const csvFilename = `${title}.csv`;
-  const pdfFilename = `${title}.pdf`;
 
-  // Build PDF HTML (reuse exportPDF logic, but return blob instead of opening window)
-  const pdfHTML = buildPDFHTML(data);
-  const pdfBlob = new Blob([pdfHTML], {type:'text/html'});
+  // Real PDF via jsPDF; fall back to HTML only if the library didn't load.
+  let pdfBlob, pdfFilename, pdfType;
+  if(window.jspdf && window.jspdf.jsPDF){
+    pdfBlob = buildPDFDoc(data);
+    pdfFilename = `${title}.pdf`;
+    pdfType = 'application/pdf';
+  } else {
+    pdfBlob = new Blob([buildPDFHTML(data)], {type:'text/html'});
+    pdfFilename = `${title}.html`;
+    pdfType = 'text/html';
+  }
 
-  // Try Web Share API with files (iOS Safari supports this)
+  // Try Web Share API with files (iOS Safari / modern mobile supports this —
+  // it's the only client-side way to attach files to an email automatically).
   if(navigator.canShare){
     const csvFile = new File([csvBlob], csvFilename, {type:'text/csv'});
-    const pdfFile = new File([pdfBlob], pdfFilename.replace('.pdf','.html'), {type:'text/html'});
-    const shareData = {
-      title: subject,
-      text: body,
-      files: [pdfFile, csvFile],
-    };
+    const pdfFile = new File([pdfBlob], pdfFilename, {type:pdfType});
+    const shareData = { title: subject, text: subject, files: [pdfFile, csvFile] };
     if(navigator.canShare(shareData)){
       try {
         await navigator.share(shareData);
-        toast('Choose Mail from the share sheet');
+        toast('Choose Mail — send to ' + recipient);
         return;
       } catch(e){
-        // User cancelled or share failed — fall through to mailto
         if(e.name === 'AbortError') return; // user cancelled, do nothing
+        // otherwise fall through to mailto
       }
     }
   }
 
-  // Fallback: download files separately, then open mailto
-  // First: trigger CSV download
+  // Fallback (desktop / browsers without file sharing): download the real
+  // PDF + CSV, then open Mail pre-addressed with the subject filled in.
   const csvUrl = URL.createObjectURL(csvBlob);
   const csvA = document.createElement('a');
   csvA.href = csvUrl; csvA.download = csvFilename;
   document.body.appendChild(csvA); csvA.click();
   setTimeout(()=>{document.body.removeChild(csvA);URL.revokeObjectURL(csvUrl);}, 100);
 
-  // Second: open PDF report
   setTimeout(()=>{
     const pdfUrl = URL.createObjectURL(pdfBlob);
     const pdfA = document.createElement('a');
-    pdfA.href = pdfUrl; pdfA.download = pdfFilename.replace('.pdf','.html');
+    pdfA.href = pdfUrl; pdfA.download = pdfFilename;
     document.body.appendChild(pdfA); pdfA.click();
     setTimeout(()=>{document.body.removeChild(pdfA);URL.revokeObjectURL(pdfUrl);}, 100);
   }, 300);
 
-  // Third: open mailto with body + instruction to attach
   setTimeout(()=>{
-    const noteAtTop = `[ATTACH the PDF and CSV files just downloaded to Files]\n\n`;
-    const mailtoBody = encodeURIComponent(noteAtTop + body);
-    const mailto = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${mailtoBody}`;
+    const note = `[Attach the PDF and CSV just downloaded]\n\n`;
+    const mailto = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(note)}`;
     window.location.href = mailto;
-    toast('Files saved — attach them in Mail');
+    toast('Files saved — attach them in Mail to ' + recipient);
   }, 800);
 }
 
@@ -988,6 +991,80 @@ tr.loadhdr td{background:#eef3fb;color:#0066cc;font-weight:700;font-size:12px;bo
 </table>
 <div class="footer">Davis Delivery Service · Warehouse Scan Report · ${now.toISOString()}</div>
 </body></html>`;
+}
+
+// ── Build a real PDF (jsPDF) — grouped by load, for emailed report ──
+// Returns an application/pdf Blob. Orders are grouped by Load# (the active
+// session order is never changed). Falls back to HTML only if jsPDF failed
+// to load (handled by the caller).
+function buildPDFDoc(scanData){
+  const data = scanData || scans;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:'letter' });
+  const now = new Date();
+  const dateLong = now.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const timeStr = now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+  const wh = data.filter(s=>s.isForgotten||s.status==='warehouse'||s.status==='planned');
+  const appts = data.filter(s=>s.isAppointment||s.status==='appointment');
+  const delivered = data.filter(s=>s.status==='delivered');
+  const onTruck = data.filter(s=>s.status==='on-truck');
+
+  const statusLabel = s => {
+    if(s.isAppointment||s.status==='appointment') return 'APPT';
+    if(s.isForgotten) return 'FORGOTTEN';
+    if(s.status==='delivered') return 'DELIVERED';
+    if(s.status==='on-truck') return 'ON TRUCK';
+    if(s.status==='planned') return 'PLANNED';
+    return (s.status||'').toUpperCase()||'-';
+  };
+  const num = v => (v===0||v) ? String(v) : '-';
+
+  // Header
+  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(0,102,204);
+  doc.text('Forgotten Freight Log', 40, 44);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(110);
+  doc.text(`${dateLong} · ${timeStr}`, 40, 60);
+  doc.text(`Total ${data.length}  ·  Forgotten ${wh.length}  ·  Appt ${appts.length}  ·  Delivered ${delivered.length}  ·  On Truck ${onTruck.length}`, 40, 74);
+
+  const head = [['#','PRO#','Status','Consignee','Address','Driver','Route','Weight','Plt/Ctn','Delivered','Scanned']];
+  const groups = groupByLoad(data);
+  const pageH = doc.internal.pageSize.getHeight();
+  let startY = 92;
+  let idx = 0;
+  groups.forEach((items, load)=>{
+    const loadLabel = (load && load !== '—') ? load : 'No Load #';
+    // Make sure the load heading isn't orphaned at the bottom of a page.
+    if(startY > pageH - 80){ doc.addPage(); startY = 50; }
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(0,102,204);
+    doc.text(`Load ${loadLabel} — ${items.length} order${items.length===1?'':'s'}`, 40, startY);
+    const body = items.map(s=>{
+      idx++;
+      const addr = [s.address,s.city,s.state,s.zip].filter(Boolean).join(', ') || '-';
+      return [idx, s.pro||'-', statusLabel(s), s.consignee||'-', addr, s.driver||'-', s.route||'-',
+              s.weight?`${s.weight} lbs`:'-', `${num(s.pallets)}/${num(s.cartons)}`, s.deliveredAt||'-', s.time||'-'];
+    });
+    doc.autoTable({
+      head, body,
+      startY: startY + 8,
+      styles:{ fontSize:8, cellPadding:3, overflow:'linebreak', textColor:[40,40,40] },
+      headStyles:{ fillColor:[244,244,244], textColor:[60,60,60], fontStyle:'bold' },
+      alternateRowStyles:{ fillColor:[250,250,250] },
+      margin:{ left:40, right:40 },
+    });
+    startY = doc.lastAutoTable.finalY + 24;
+  });
+
+  // Page numbers
+  const pages = doc.internal.getNumberOfPages();
+  for(let p=1; p<=pages; p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150);
+    doc.text(`Davis Delivery · Forgotten Freight Log · Page ${p} of ${pages}`,
+             40, doc.internal.pageSize.getHeight() - 18);
+  }
+
+  return doc.output('blob');
 }
 
 // ── Export Report Text ─────────────────────────
