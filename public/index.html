@@ -792,11 +792,32 @@ function exportCSV(){
   toast('CSV exported');
 }
 
+// ── Group scans by Load (for emailed PDF/CSV only) ──
+// Returns scans reordered so all orders sharing a Load# are contiguous,
+// preserving the order each load was first seen. Does NOT mutate the
+// active session order — only the emailed exports are grouped this way.
+function groupByLoad(scanData){
+  const data = scanData || scans;
+  const groups = new Map();
+  data.forEach(s=>{
+    const key = s.loadNbr || '—';
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  });
+  return groups;
+}
+
 // ── Build CSV as Blob (for email/share) ────────
 function buildCSVBlob(scanData){
   const data = scanData || scans;
-  const cols=['PRO','Stop#','Seal#','Driver','Route','Load#','Consignee','Address','City','State','Zip','Weight','Pallets','Cartons','Delivered At','Status','Status Code','Source','Scanned At'];
-  const rows=data.map(s=>[s.pro,s.stop,s.sealNbr,s.driver,s.route,s.loadNbr,s.consignee,s.address||s.fullAddress,s.city,s.state,s.zip,s.weight,s.pallets,s.cartons,s.deliveredAt,s.status,s.stopStatusCode,s.source,s.time]);
+  const cols=['Load#','PRO','Stop#','Seal#','Driver','Route','Consignee','Address','City','State','Zip','Weight','Pallets','Cartons','Delivered At','Status','Status Code','Source','Scanned At'];
+  const groups = groupByLoad(data);
+  const rows=[];
+  groups.forEach((items,load)=>{
+    items.forEach(s=>{
+      rows.push([load,s.pro,s.stop,s.sealNbr,s.driver,s.route,s.consignee,s.address||s.fullAddress,s.city,s.state,s.zip,s.weight,s.pallets,s.cartons,s.deliveredAt,s.status,s.stopStatusCode,s.source,s.time]);
+    });
+  });
   const csv=[cols,...rows].map(r=>r.map(v=>`"${(v||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
   return new Blob([csv], {type:'text/csv'});
 }
@@ -811,41 +832,18 @@ async function emailSession(scanData){
   if(!data.length){toast('No scans to email');return;}
 
   const now = new Date();
-  const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   const dateShort = now.toISOString().slice(0,10);
-  const wh = data.filter(s=>s.isForgotten||s.status==='warehouse'||s.status==='planned');
-  const appts = data.filter(s=>s.isAppointment||s.status==='appointment');
-  const delivered = data.filter(s=>s.status==='delivered');
-  const onTruck = data.filter(s=>s.status==='on-truck');
 
   const recipient = 'customerservice@davisdelivery.com';
-  const subject = `Davis Warehouse Scan Report — ${dateShort}`;
-  let body = `Davis Delivery — Warehouse Scan Report\n${dateStr}\n\n`;
-  body += `Total Scanned: ${data.length}\n`;
-  body += `In Warehouse / Forgotten: ${wh.length}\n`;
-  body += `Appointments: ${appts.length}\n`;
-  body += `On Truck: ${onTruck.length}\n`;
-  body += `Delivered: ${delivered.length}\n\n`;
+  const title = `Forgotten Freight Log ${dateShort}`;
+  const subject = title;
+  // Scan contents are delivered as the attached PDF/CSV — keep the body empty.
+  const body = '';
 
-  if(wh.length){
-    body += `⚠ POSSIBLY FORGOTTEN:\n`;
-    wh.forEach(s=>{
-      body += `  ${s.pro} — ${s.consignee||'—'} — ${s.driver||'—'} (${s.route||'—'})\n`;
-    });
-    body += '\n';
-  }
-  if(appts.length){
-    body += `🔔 APPOINTMENT REQUIRED:\n`;
-    appts.forEach(s=>{
-      body += `  ${s.pro} — ${s.consignee||'—'} — ${s.driver||'—'} (${s.route||'—'})\n`;
-    });
-    body += '\n';
-  }
-
-  // Build the file blobs
+  // Build the file blobs (grouped by load, titled "Forgotten Freight Log <date>")
   const csvBlob = buildCSVBlob(data);
-  const csvFilename = `Davis_WH_Scan_${dateShort}.csv`;
-  const pdfFilename = `Davis_WH_Scan_${dateShort}.pdf`;
+  const csvFilename = `${title}.csv`;
+  const pdfFilename = `${title}.pdf`;
 
   // Build PDF HTML (reuse exportPDF logic, but return blob instead of opening window)
   const pdfHTML = buildPDFHTML(data);
@@ -927,9 +925,17 @@ function buildPDFHTML(scanData){
     return s.status?.toUpperCase()||'—';
   };
 
-  const rows = data.map((s,i) => `
+  // Group orders by load (emailed report only — does not affect active session)
+  const groups = groupByLoad(data);
+  let idx = 0;
+  let rows = '';
+  groups.forEach((items,load)=>{
+    rows += `<tr class="loadhdr"><td colspan="11">Load ${load} · ${items.length} order${items.length===1?'':'s'}</td></tr>`;
+    items.forEach(s=>{
+      idx++;
+      rows += `
     <tr>
-      <td>${i+1}</td>
+      <td>${idx}</td>
       <td><strong style="color:#0066cc">${s.pro||'—'}</strong></td>
       <td style="color:${statusColor(s)};font-weight:600">${statusLabel(s)}</td>
       <td>${s.consignee||'—'}</td>
@@ -940,9 +946,11 @@ function buildPDFHTML(scanData){
       <td>${s.pallets||'—'}/${s.cartons||'—'}</td>
       <td>${s.deliveredAt||'—'}</td>
       <td>${s.time||'—'}</td>
-    </tr>`).join('');
+    </tr>`;
+    });
+  });
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Davis WH Scan ${now.toISOString().slice(0,10)}</title>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Forgotten Freight Log ${now.toISOString().slice(0,10)}</title>
 <style>
 body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:20px;color:#222}
 h1{margin:0 0 4px;color:#0066cc;font-size:22px}
@@ -960,10 +968,11 @@ table{width:100%;border-collapse:collapse;font-size:11px}
 th{background:#f4f4f4;text-align:left;padding:6px 8px;border:1px solid #ddd;font-weight:600}
 td{padding:5px 8px;border:1px solid #e5e5e5;vertical-align:top}
 tr:nth-child(even) td{background:#fafafa}
+tr.loadhdr td{background:#eef3fb;color:#0066cc;font-weight:700;font-size:12px;border-color:#cdddf2}
 .footer{margin-top:16px;font-size:10px;color:#999;text-align:center}
 @media print{body{margin:8mm}.no-print{display:none}}
 </style></head><body>
-<h1>Davis Delivery — Warehouse Scan Report</h1>
+<h1>Forgotten Freight Log</h1>
 <div class="sub">${dateStr} · ${timeStr}</div>
 <div class="tag">Family Owned Since 1985</div>
 <div class="summary">
